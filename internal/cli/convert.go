@@ -25,9 +25,14 @@ func newConvertCmd() *cobra.Command {
 				return runInspect(cmd, job)
 			}
 
-			var sink progress.Sink = progress.NewTerminal(os.Stderr)
-			if globals.JSON {
+			var sink progress.Sink
+			switch {
+			case globals.JSON:
 				sink = progress.NewJSON(os.Stderr)
+			case isTerminal(os.Stderr):
+				sink = progress.NewTerminal(os.Stderr)
+			default:
+				sink = progress.NewPlain(os.Stderr)
 			}
 			defer sink.Close()
 

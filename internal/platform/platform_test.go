@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -98,6 +99,59 @@ func TestSparseProbeAndFreeSpace(t *testing.T) {
 	}
 	if free <= 0 {
 		t.Fatalf("free = %d", free)
+	}
+}
+
+func TestReapTemps(t *testing.T) {
+	dir := t.TempDir()
+
+	mk := func(stem string) string {
+		f, err := CreateTemp(dir, stem, ".tmp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := f.Name()
+		f.Close()
+		return path
+	}
+	age := func(path string) {
+		old := time.Now().Add(-2 * time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stale := mk("photo")
+	age(stale)
+	fresh := mk("photo")
+	locked := mk("photo")
+	age(locked)
+	lf, err := os.OpenFile(locked, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if err := LockFile(lf); err != nil {
+		t.Fatal(err)
+	}
+	otherStem := mk("film")
+	age(otherStem)
+
+	removed, err := ReapTemps(dir, "photo", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != stale {
+		t.Fatalf("removed = %v, want [%s]", removed, stale)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatal("fresh temp was reaped")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Fatal("locked temp was reaped")
+	}
+	if _, err := os.Stat(otherStem); err != nil {
+		t.Fatal("a different stem's temp was reaped")
 	}
 }
 

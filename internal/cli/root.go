@@ -99,6 +99,12 @@ type silentError struct{ err error }
 func (e *silentError) Error() string { return e.err.Error() }
 func (e *silentError) Unwrap() error { return e.err }
 
+// isTerminal reports whether f is a character device (a real terminal).
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func emitFailure(res *core.Result, err error) error {
 	if globals.JSON {
 		if res == nil {

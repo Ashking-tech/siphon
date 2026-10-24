@@ -16,6 +16,7 @@ import (
 
 	"siphon/internal/core"
 	"siphon/internal/formats"
+	"siphon/internal/imaging"
 	"siphon/internal/journal"
 	"siphon/internal/media"
 	"siphon/internal/platform"
@@ -121,6 +122,31 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		return nil, refuse(err)
 	}
 
+	// 8/9. Image probe: decode once so the alpha policy, the free-space
+	// estimate, and the metadata warnings are all decided before any write.
+	var imageInfo *imaging.Info
+	if isImage(job.Pair.Source) {
+		probeCtx := ctx
+		if job.Timeout > 0 {
+			var cancel context.CancelFunc
+			probeCtx, cancel = context.WithTimeout(ctx, job.Timeout)
+			defer cancel()
+		}
+		imageInfo, err = imaging.Probe(probeCtx, job.SourcePath, job.Pair.Source)
+		if err != nil {
+			return nil, refuse(err)
+		}
+		if job.Target == formats.JPG && imageInfo.HasAlpha && job.Background == "" {
+			return nil, refuse(siphonerr.New(siphonerr.AlphaUnsupported,
+				"%s has transparency and JPEG cannot carry it; pass --bg <colour>", job.SourcePath))
+		}
+		if job.Background != "" {
+			if _, err := imaging.ParseBackground(job.Background); err != nil {
+				return nil, refuse(err)
+			}
+		}
+	}
+
 	// 16. Immutable attribute.
 	if immutable, err := platform.HasImmutable(job.SourcePath); err != nil {
 		return nil, refuse(siphonerr.Wrap(siphonerr.Permission, err, "cannot read file flags"))
@@ -141,9 +167,12 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	}
 
 	// 10. Free space (and 11/12 where applicable).
-	needed, warnings, err := estimateFree(ctx, job, info.Size(), probe)
+	needed, warnings, err := estimateFree(ctx, job, info.Size(), probe, imageInfo)
 	if err != nil {
 		return nil, refuse(err)
+	}
+	if imageInfo != nil {
+		warnings = append(warnings, imageInfo.Warnings...)
 	}
 	free, err := platform.FreeSpace(dir)
 	if err != nil {
@@ -190,6 +219,14 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		plan.Verify = job.Verify
 		plan.PlanSource = "probe"
 	}
+	if imageInfo != nil {
+		plan.ImageWidth = imageInfo.Width
+		plan.ImageHeight = imageInfo.Height
+		plan.HasAlpha = imageInfo.HasAlpha
+		if !job.DropMetadata && !imageInfo.Metadata.Empty() {
+			plan.Metadata = imageInfo.Metadata.Classes()
+		}
+	}
 	return plan, nil
 }
 
@@ -218,7 +255,7 @@ func Stem(path string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
-func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *media.Probe) (int64, []string, error) {
+func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *media.Probe, imageInfo *imaging.Info) (int64, []string, error) {
 	var warnings []string
 	var needed int64
 
@@ -251,11 +288,17 @@ func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *m
 		} else {
 			needed = sourceSize*115/100 + 2*mib
 		}
-	case job.Pair.Source == formats.PNG || job.Pair.Source == formats.JPG || job.Pair.Source == formats.WEBP:
-		// Conservative until the image engine can read dimensions: a lossless
-		// transcode can inflate, and the spec says over-refusal is acceptable.
-		needed = sourceSize*3 + 2*mib
-		warnings = append(warnings, "image space estimate is conservative (lossless outputs can inflate)")
+	case isImage(job.Pair.Source):
+		if imageInfo != nil {
+			// spec §7.1: source + max(2 × source, decoded_raw × 1.5) + 2 MiB
+			decoded := decodedRaw(imageInfo)
+			needed = sourceSize + maxInt64(2*sourceSize, decoded+decoded/2) + 2*mib
+		} else {
+			needed = sourceSize*3 + 2*mib
+		}
+		if job.DropMetadata && imageInfo != nil && !imageInfo.Metadata.Empty() {
+			warnings = append(warnings, "--drop-metadata set: ICC/EXIF/XMP metadata will not be carried")
+		}
 	default:
 		needed = sourceSize*2 + 16*mib
 	}
@@ -270,6 +313,28 @@ func segmentBytes(d time.Duration, bitrate int64) int64 {
 		return 64 * mib
 	}
 	return int64(d.Seconds()*float64(bitrate)/8) + 8*mib
+}
+
+// isImage reports whether the source goes through the AtomicCopy engine.
+func isImage(f formats.Format) bool {
+	return f == formats.PNG || f == formats.JPG || f == formats.WEBP
+}
+
+// decodedRaw estimates the decoded bitmap size, guarding against absurd
+// headers: four bytes per pixel.
+func decodedRaw(info *imaging.Info) int64 {
+	if info == nil || info.Width <= 0 || info.Height <= 0 ||
+		info.Width > 1<<20 || info.Height > 1<<20 {
+		return 0
+	}
+	return int64(info.Width) * int64(info.Height) * 4
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func sumStreamBits(p *media.Probe) int64 {
@@ -332,6 +397,16 @@ func FormatPlan(p *core.Plan) string {
 	}
 	if p.Verify != "" {
 		fmt.Fprintf(&b, "  verify      %s\n", p.Verify)
+	}
+	if p.ImageWidth > 0 {
+		alpha := ""
+		if p.HasAlpha {
+			alpha = " (has alpha)"
+		}
+		fmt.Fprintf(&b, "  image       %dx%d%s\n", p.ImageWidth, p.ImageHeight, alpha)
+	}
+	if len(p.Metadata) > 0 {
+		fmt.Fprintf(&b, "  metadata    %s\n", strings.Join(p.Metadata, ", "))
 	}
 	fmt.Fprintf(&b, "  free needed %s     you have %s\n", p.FreeNeededHuman, p.FreeAvailableHuman)
 	fmt.Fprintf(&b, "  crash cost  %s\n", p.CrashCost)

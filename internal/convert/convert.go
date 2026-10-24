@@ -7,6 +7,7 @@ import (
 
 	"siphon/internal/core"
 	"siphon/internal/engine"
+	_ "siphon/internal/engines" // registers the concrete engines
 	"siphon/internal/preflight"
 	"siphon/internal/progress"
 	"siphon/internal/siphonerr"

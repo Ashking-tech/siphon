@@ -70,6 +70,24 @@ func (t *Terminal) Close() error {
 	return nil
 }
 
+// Plain prints phase changes and warnings, one line each, without terminal
+// control codes. Used when stderr is redirected.
+type Plain struct{ w io.Writer }
+
+func NewPlain(w io.Writer) *Plain { return &Plain{w: w} }
+
+func (p *Plain) Emit(e Event) {
+	if e.Message != "" {
+		fmt.Fprintf(p.w, "[%s] %s\n", e.Phase, e.Message)
+	}
+}
+
+func (p *Plain) Warn(msg string) {
+	fmt.Fprintf(p.w, "warning: %s\n", msg)
+}
+
+func (p *Plain) Close() error { return nil }
+
 // JSON emits one JSON object per line. This is the GUI-facing stream.
 type JSON struct {
 	mu  sync.Mutex

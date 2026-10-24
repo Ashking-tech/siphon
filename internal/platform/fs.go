@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -80,6 +81,85 @@ func sanitizeStem(stem string) string {
 
 // Fsync flushes a file's data and metadata.
 func Fsync(f *os.File) error { return f.Sync() }
+
+// FsyncPath opens path O_RDONLY|O_NOFOLLOW and fsyncs it. Used to make a temp
+// durable before rename without keeping a write descriptor around.
+func FsyncPath(path string) error {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return &os.PathError{Op: "open-fsync", Path: path, Err: err}
+	}
+	defer unix.Close(fd)
+	if err := unix.Fsync(fd); err != nil {
+		return &os.PathError{Op: "fsync", Path: path, Err: err}
+	}
+	return nil
+}
+
+// WriteFile replaces the contents of an existing file without following a
+// symlink. The caller owns the path and its lifetime.
+func WriteFile(path string, data []byte) error {
+	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_TRUNC|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return &os.PathError{Op: "open-write", Path: path, Err: err}
+	}
+	f := os.NewFile(uintptr(fd), path)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return &os.PathError{Op: "write", Path: path, Err: err}
+	}
+	if err := f.Close(); err != nil {
+		return &os.PathError{Op: "close", Path: path, Err: err}
+	}
+	return nil
+}
+
+// LockFile takes a non-blocking exclusive advisory lock on an open file. It
+// marks a live same-directory temp so the reaper can tell an abandoned temp
+// from one an active conversion still owns.
+func LockFile(f *os.File) error {
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return &os.PathError{Op: "flock", Path: f.Name(), Err: err}
+	}
+	return nil
+}
+
+// ReapTemps removes same-directory temps for stem that are older than minAge
+// and are not locked by a live process. Locked temps (see LockFile) are left
+// alone, so a concurrent conversion is never disturbed.
+func ReapTemps(dir, stem string, minAge time.Duration) ([]string, error) {
+	prefix := ".siphon-" + sanitizeStem(stem) + "-"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var removed []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || now.Sub(info.ModTime()) < minAge {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		fd, err := unix.Open(path, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			continue
+		}
+		if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			unix.Close(fd) // still owned by a live conversion
+			continue
+		}
+		if err := unix.Unlink(path); err == nil {
+			removed = append(removed, path)
+		}
+		unix.Close(fd)
+	}
+	return removed, nil
+}
 
 // FsyncDir fsyncs a directory so a rename or unlink is durable.
 func FsyncDir(dir string) error {

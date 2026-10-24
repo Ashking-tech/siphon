@@ -12,6 +12,8 @@ Convert media files in place on Linux without needing twice the disk space.
 make build          # bin/siphon, CGO_ENABLED=0
 make test
 ./bin/siphon doctor
+./bin/siphon inspect photo.png --to jpg
+./bin/siphon convert photo.png --to jpg --bg white
 ./bin/siphon inspect movie.mkv --to mp4
 ```
 
@@ -20,5 +22,8 @@ Runtime dependencies: `ffmpeg`/`ffprobe` ≥ 5.0, `lame` ≥ 3.100;
 
 ## Status
 
-Foundation only: CLI, pre-flight gate, journal, platform layer. Engines are
-landing in the order documented in `context.md`.
+Working end to end: CLI (`convert`, `inspect`, `recover`, `doctor`,
+`version`), pre-flight gate, journal, platform layer, and the image engine
+(`AtomicCopy`, PNG/JPEG/WebP with ICC/EXIF/XMP transplant and alpha policy).
+Audio (`Sliding`) and video (`Remux`/`Relocate`) engines are next, in the
+order documented in `context.md`.

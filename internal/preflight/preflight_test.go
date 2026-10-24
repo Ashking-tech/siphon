@@ -1,7 +1,11 @@
 package preflight
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +17,47 @@ import (
 	"siphon/internal/siphonerr"
 )
 
-var pngHeader = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+// testPNG builds a real PNG so the image probe can decode it. With alpha the
+// top-left pixel is transparent.
+func testPNG(t *testing.T, w, h int, alpha bool) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			a := uint8(255)
+			if alpha && x == 0 && y == 0 {
+				a = 0
+			}
+			img.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(x * 255 / maxInt(1, w-1)),
+				G: uint8(y * 255 / maxInt(1, h-1)),
+				B: 128,
+				A: a,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func writePNG(t *testing.T, dir, name string, w, h int, alpha bool) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, testPNG(t, w, h, alpha), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 func imageJob(t *testing.T, srcPath string) *core.Job {
 	t.Helper()
@@ -38,10 +82,7 @@ func imageJob(t *testing.T, srcPath string) *core.Job {
 
 func TestPlanImage(t *testing.T) {
 	dir := t.TempDir()
-	src := filepath.Join(dir, "img.png")
-	if err := os.WriteFile(src, pngHeader, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	src := writePNG(t, dir, "img.png", 20, 10, false)
 	plan, err := Run(context.Background(), imageJob(t, src))
 	if err != nil {
 		t.Fatal(err)
@@ -52,14 +93,62 @@ func TestPlanImage(t *testing.T) {
 	if plan.FreeNeeded <= 0 || plan.FreeAvailable <= 0 {
 		t.Fatalf("space not reported: %+v", plan)
 	}
+	if plan.ImageWidth != 20 || plan.ImageHeight != 10 {
+		t.Fatalf("image dimensions not reported: %+v", plan)
+	}
+}
+
+func TestImageEstimateIncludesDecodedSize(t *testing.T) {
+	dir := t.TempDir()
+	src := writePNG(t, dir, "big.png", 100, 100, false)
+	plan, err := Run(context.Background(), imageJob(t, src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// spec §7.1: source + max(2×source, decoded_raw×1.5) + 2 MiB
+	want := int64(100*100*4)*3/2 + 2<<20
+	if plan.FreeNeeded < want {
+		t.Fatalf("free estimate %d is below the decoded-size floor %d", plan.FreeNeeded, want)
+	}
+}
+
+func TestRefuseAlphaForJPEG(t *testing.T) {
+	dir := t.TempDir()
+	src := writePNG(t, dir, "alpha.png", 8, 8, true)
+	_, err := Run(context.Background(), imageJob(t, src))
+	if !siphonerr.IsCode(err, siphonerr.AlphaUnsupported) {
+		t.Fatalf("got %v, want E_ALPHA_UNSUPPORTED", err)
+	}
+}
+
+func TestAlphaAllowedWithBackground(t *testing.T) {
+	dir := t.TempDir()
+	src := writePNG(t, dir, "alpha.png", 8, 8, true)
+	job := imageJob(t, src)
+	job.Background = "white"
+	plan, err := Run(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.HasAlpha {
+		t.Fatalf("plan should note the source alpha: %+v", plan)
+	}
+}
+
+func TestRefuseBadBackground(t *testing.T) {
+	dir := t.TempDir()
+	src := writePNG(t, dir, "alpha.png", 8, 8, true)
+	job := imageJob(t, src)
+	job.Background = "chartreuse-ish"
+	_, err := Run(context.Background(), job)
+	if !siphonerr.IsCode(err, siphonerr.Usage) {
+		t.Fatalf("got %v, want E_USAGE", err)
+	}
 }
 
 func TestRefuseSymlink(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real.png")
-	if err := os.WriteFile(real, pngHeader, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	real := writePNG(t, dir, "real.png", 4, 4, false)
 	link := filepath.Join(dir, "link.png")
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
@@ -72,11 +161,8 @@ func TestRefuseSymlink(t *testing.T) {
 
 func TestRefuseExistingTarget(t *testing.T) {
 	dir := t.TempDir()
-	src := filepath.Join(dir, "img.png")
+	src := writePNG(t, dir, "img.png", 4, 4, false)
 	dst := filepath.Join(dir, "img.jpg")
-	if err := os.WriteFile(src, pngHeader, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(dst, []byte("exists"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -98,12 +184,22 @@ func TestRefuseBadMagic(t *testing.T) {
 	}
 }
 
-func TestRefuseStaleJournal(t *testing.T) {
+func TestRefuseTruncatedImage(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "img.png")
-	if err := os.WriteFile(src, pngHeader, 0o600); err != nil {
+	data := testPNG(t, 8, 8, false)
+	if err := os.WriteFile(src, data[:20], 0o600); err != nil {
 		t.Fatal(err)
 	}
+	_, err := Run(context.Background(), imageJob(t, src))
+	if !siphonerr.IsCode(err, siphonerr.SourceCorrupt) {
+		t.Fatalf("got %v, want E_SOURCE_CORRUPT", err)
+	}
+}
+
+func TestRefuseStaleJournal(t *testing.T) {
+	dir := t.TempDir()
+	src := writePNG(t, dir, "img.png", 4, 4, false)
 	store, _, err := journal.Create(dir, "img")
 	if err != nil {
 		t.Fatal(err)
