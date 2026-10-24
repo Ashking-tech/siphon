@@ -82,6 +82,17 @@ func sanitizeStem(stem string) string {
 // Fsync flushes a file's data and metadata.
 func Fsync(f *os.File) error { return f.Sync() }
 
+// Fdatasync flushes file data and only the metadata needed to retrieve it.
+// The reclaim cursor protocol uses it for its periodic checkpoints (spec
+// §4.4.1) so timestamp churn does not turn every checkpoint into a journal
+// commit for the whole inode.
+func Fdatasync(f *os.File) error {
+	if err := unix.Fdatasync(int(f.Fd())); err != nil {
+		return &os.PathError{Op: "fdatasync", Path: f.Name(), Err: err}
+	}
+	return nil
+}
+
 // FsyncPath opens path O_RDONLY|O_NOFOLLOW and fsyncs it. Used to make a temp
 // durable before rename without keeping a write descriptor around.
 func FsyncPath(path string) error {
@@ -303,4 +314,73 @@ func RemoveIfExists(path string) {
 		// Cleanup is best-effort; callers report the primary failure.
 		_ = err
 	}
+}
+
+// Snapshot is the identity of a source file at a point in time. Engines
+// re-take it before any destructive step so a concurrent editor is caught.
+type Snapshot struct {
+	Dev     uint64
+	Ino     uint64
+	Size    int64
+	MtimeNS int64
+}
+
+// TakeSnapshot stats path without following symlinks.
+func TakeSnapshot(path string) (Snapshot, error) {
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil {
+		return Snapshot{}, siphonerr.Wrap(siphonerr.SourceInvalid, err, "cannot stat %s", path)
+	}
+	return Snapshot{
+		Dev:     uint64(st.Dev),
+		Ino:     st.Ino,
+		Size:    st.Size,
+		MtimeNS: st.Mtim.Nano(),
+	}, nil
+}
+
+// SameIdentity reports whether the file at path is still the same inode.
+func (s Snapshot) SameIdentity(path string) error {
+	got, err := TakeSnapshot(path)
+	if err != nil {
+		return err
+	}
+	if got.Dev != s.Dev || got.Ino != s.Ino {
+		return siphonerr.New(siphonerr.SourceChanged, "%s was replaced while it was being converted", path)
+	}
+	return nil
+}
+
+// Check re-takes the snapshot and requires the file to be byte-identical in
+// size and mtime. Safe-mode engines call it right before finalisation.
+func (s Snapshot) Check(path string) error {
+	got, err := TakeSnapshot(path)
+	if err != nil {
+		return err
+	}
+	if got != s {
+		return siphonerr.New(siphonerr.SourceChanged,
+			"%s changed while it was being converted; nothing was replaced", path)
+	}
+	return nil
+}
+
+// CheckOpen verifies that an already-open descriptor still matches the
+// snapshot, closing the window between the path check and the open.
+func (s Snapshot) CheckOpen(f *os.File) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
+		return siphonerr.Wrap(siphonerr.SourceInvalid, err, "cannot stat the open source")
+	}
+	got := Snapshot{
+		Dev:     uint64(st.Dev),
+		Ino:     st.Ino,
+		Size:    st.Size,
+		MtimeNS: st.Mtim.Nano(),
+	}
+	if got != s {
+		return siphonerr.New(siphonerr.SourceChanged,
+			"%s changed while it was being opened", f.Name())
+	}
+	return nil
 }

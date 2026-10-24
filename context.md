@@ -35,17 +35,19 @@ Supported pairs: WAV→MP3, MKV→MP4, PNG/JPEG/WebP matrix. See `spec.md` §3.1
 | Journal (CRC, atomic save, lock) | implemented + tested |
 | Platform layer (temp, rename, fsync, xattr, sparse probe, magic, temp reap) | implemented + tested |
 | Progress sinks | implemented (noop, terminal, plain, JSON) |
-| Preflight gate | partial (checks 1–7, 14–18, 20 + space + image probe) |
-| CLI skeleton | `convert`, `inspect`, `recover`, `doctor`, `version` |
+| Preflight gate | checks 1–7, 14–18, 20 + WAV gate + space + image probe |
+| CLI skeleton | `convert`, `inspect`, `recover` (driver wired), `doctor`, `version` |
 | Imaging layer (decode, orientation, ICC/EXIF/XMP, WebP, verify) | implemented + tested |
-| Engines | AtomicCopy (images) implemented + tested; Sliding / Relocate / Remux not yet |
+| Engines | AtomicCopy (images), Sliding (WAV→MP3 safe + reclaim) implemented + tested; Relocate / Remux not yet |
+| WAV parser (`internal/wav`) | implemented + tested (PCM + extensible, INFO/bext detection, header synth) |
+| Recovery driver (`internal/recover`) | implemented + tested (sliding splice-resume) |
 | GUI | not yet (KDE wrapper planned; GUI toolkit decision pending) |
 
 `go build ./...` and `go test ./...` pass. `siphon doctor` and `siphon inspect`
-work. `siphon convert` converts the image pairs end to end; audio/video pairs
-still refuse with `E_INTERNAL: engine ... not implemented yet` after a
-successful pre-flight. `siphon recover` validates and summarises a journal,
-then exits 4 until the recovery driver lands.
+work. `siphon convert` converts the image pairs and WAV→MP3 (safe and reclaim)
+end to end. A killed reclaim job is finished by `siphon recover <file>`
+(splice-resume, ~26 ms seam), including crashes after truncate or rename.
+`siphon recover` on a video/relocate journal still exits 4.
 
 ---
 
@@ -68,6 +70,15 @@ then exits 4 until the recovery driver lands.
 | Animated sources | APNG / animated WebP refused with `E_FORMAT_UNSUPPORTED` | converting one frame silently would be unasked data loss |
 | Stale temp reaping | same-stem `.tmp` older than 1 h, only when not flocked | live temps are flocked; a concurrent conversion is never disturbed |
 | Non-TTY progress | `progress.Plain` (no ANSI) unless stderr is a character device | keeps logs and the KDE wrapper clean |
+| LAME (safe) | `lame --silent -V 2 - <tmp-path>` (or `-b <kbps>`) | file output gets a proper Xing header; byte-identical to path-input + path-output |
+| LAME (reclaim) | `lame --silent -V 2 - -` with pipes | pipe VBR output carries no Xing header by design; recovery scans frames instead of trusting a header |
+| MP3 gate | ffprobe stream props + full decode byte-count duration | headerless VBR container estimates are ~6 % off; decode count is the ground truth |
+| Reclaim resume | scan complete MP3 frames in the written prefix, back off one frame of PCM | encoder delay is not observable from the stream; the splice is a bounded ≤26 ms echo, never a gap |
+| Reclaim margin | spec margin while feeding; plain `write ≤ read` after EOF | the literal §4.4.1 margin would stall files smaller than 16 MiB forever |
+| Reclaim checkpoints | `fdatasync` + journal save every 8 MiB read or 1 s with dirty writes | spec §4.4.1 |
+| Reclaim finalise | `finalising` checkpoint → ftruncate → fdatasync → rename to target → journal remove | rename is what puts the MP3 "in place"; §4.4.1 omits it, recovery accepts both paths |
+| WAV metadata | LIST/INFO and `bext` refused with `E_METADATA_DROP` unless `--drop-metadata` | no tag transplant into MP3 yet; never silently dropped |
+| WAV formats | PCM (tag 1) and WAVE_FORMAT_EXTENSIBLE with PCM subformat; other tags `E_FORMAT_UNSUPPORTED`; >2 ch refused | spec §4.5.2, §6.7 |
 | GUI architecture | engine remains UI-agnostic; GUI consumes `--json` + progress events | decision still open on toolkit; KDE wrapper first |
 | KDE progress | `kdialog --progressbar` via `qdbus6`, fallback `--passivepopup` | `qdbus6` missing on this host, fallback matters |
 
@@ -84,10 +95,13 @@ internal/platform/              temp files, fsync, renameat2, xattr, sparse, mag
 internal/journal/               schema 2 journal, CRC, atomic checkpoint, flock (+ tests)
 internal/progress/              Sink interface + noop/terminal/plain/JSON
 internal/media/                 tool discovery/version gates, ffprobe summary
-internal/preflight/             ordered refusal gate, plan + space estimate + image probe (+ tests)
+internal/wav/                   RIFF/WAVE parser, INFO/bext detection, header synthesis (+ tests)
+internal/preflight/             ordered refusal gate, plan + space estimate + image/WAV probes (+ tests)
 internal/imaging/               image decode/encode, orientation, ICC/EXIF/XMP, WebP, verify (+ tests)
 internal/engine/                Engine interface + registry
 internal/engine/atomiccopy/     image engine: temp, alpha policy, verify, atomic rename (+ tests)
+internal/engine/sliding/        audio engine: lame safe/reclaim, invariant, MP3 frames, splice-resume (+ tests)
+internal/recover/               recovery driver: journal discovery, inode probe, engine dispatch (+ tests)
 internal/engines/               composition root: registers concrete engines
 internal/convert/               orchestrator: preflight → engine (+ tests)
 internal/cli/                   cobra commands, JSON/human output (+ tests)
@@ -121,11 +135,46 @@ Makefile, README.md, context.md
 - CRC is computed over `json.Marshal` of the journal with `crc32c` blanked.
 
 ### Platform (`internal/platform`)
-- `CreateTemp(dir, prefix)`; `Fsync`; `FsyncDir`.
+- `CreateTemp(dir, prefix)`; `Fsync`; `Fdatasync`; `FsyncDir`.
 - `RenameNoReplace`, `RenameReplace`.
 - `SameDevice`, `FreeSpace`, `SparseProbe`.
-- `OpenSource` (`O_RDWR|O_NOFOLLOW`), `ValidateMagic`.
+- `OpenSource` (`O_RDWR|O_NOFOLLOW`), `OpenReadOnly`, `ValidateMagic`.
 - `CopyMetadata` (mode/uid/gid/xattrs), `HasImmutable`.
+- `Snapshot`/`TakeSnapshot` (dev/ino/size/mtime), `Check`, `CheckOpen`,
+  `SameIdentity` — safe-mode identity gates shared by both engines.
+
+### WAV (`internal/wav`)
+- `Parse(path) (*Info, error)` / `ParseReader` — RIFF/WAVE walk; accepts PCM
+  (tag 1) and WAVE_FORMAT_EXTENSIBLE with PCM subformat; refuses anything else
+  as `E_FORMAT_UNSUPPORTED`. `Info` carries channels, rate, bits, byte
+  rate, block align, data offset/size, duration, INFO tags, `bext`, warnings.
+  A streamed `0xFFFFFFFF` data size is clamped with a warning.
+- `Info.MetadataNames`, `HasMetadata` — drives the `E_METADATA_DROP` gate.
+- `Info.FmtChunk` / `Info.Header(payload)` — canonical header synthesis for
+  the reclaim splice-resume (the original header is overwritten by then).
+
+### Engines (`internal/engine/sliding`)
+`New()` registers `sliding` (WAV→MP3). `safe`: LAME to a same-directory temp
+(`--silent -V 2 - <tmp>`, file output keeps the Xing header) fed through a
+counting reader, then fsync → ffprobe/decode-count verify → `CopyMetadata` →
+snapshot re-check → `renameat2` → unlink source → dir fsync. `reclaim`:
+journal `prepared`→`encoding`, producer/collector goroutines with `pread` at
+the read cursor and `pwrite` at the write cursor under
+`write + margin ≤ read` (plain `write ≤ read` after EOF), 8 MiB/1 s
+`fdatasync` checkpoints, `verifying` (ffprobe + decode count on `[0,w)`)
+→ `finalising` → ftruncate → rename → journal remove. Failures before the
+first write remove the journal and report an untouched source; afterwards
+`E_RECOVERY_AVAILABLE` (exit 4) or `E_INTERRUPTED` (exit 130) point at
+`siphon recover`. `ResumeReclaim(store, journal, sink)` scans complete frames
+in the written prefix, backs off one PCM frame, encodes the remainder through
+a synthetic WAV header, and finishes with the same idempotent finalisation.
+
+### Recovery (`internal/recover`)
+`Run(ctx, source, sink) (*core.Result, journalPath, error)` — finds the
+journal next to the source, probes source-or-target for the inode, runs
+`journal.VerifySource` (mode/phase-aware), and dispatches to the owning
+engine. Sliding is wired; relocate/remux answer `E_RECOVERY_AVAILABLE` until
+their resume lands.
 
 ### Imaging (`internal/imaging`)
 - `Probe(ctx, path, format) (*Info, error)` — full decode at pre-flight;
@@ -161,14 +210,18 @@ dispatch → uniform `core.Result` (also returned on error). Unknown engine →
 `E_INTERNAL` naming the registered set.
 
 ### Preflight (`internal/preflight`)
-`Run(job) (*core.Plan, error)` currently checks source validity, pair/mode,
-hardlinks, permissions, target existence, same device, stale journal, magic,
-immutable flag, root, dependencies, and a conservative free-space estimate;
-images additionally get a full probe (dimensions, alpha gate, metadata
-classes) and the image estimate
-(`source + max(2×source, decoded_raw×1.5) + 2 MiB`). Codec, metadata,
-sparse, relocate gate, stitch probe, and confirmation are still TODO
-(documented in context §7).
+`Run(job) (*core.Plan, error)` checks source validity, pair/mode, hardlinks,
+permissions, target existence, same device, stale journal, magic, immutable
+flag, root, dependencies, and a conservative free-space estimate. Images get
+a full probe (dimensions, alpha gate, metadata classes) and the image
+estimate (`source + max(2×source, decoded_raw×1.5) + 2 MiB`). WAV sources are
+parsed from their own header (`internal/wav`, no ffprobe): >2 channels is
+`E_FORMAT_UNSUPPORTED`, INFO/bext metadata is `E_METADATA_DROP` unless
+`--drop-metadata`, and reclaim applies the R ≤ 0.90 gate (`E_INPLACE_INFEASIBLE`
+otherwise). Estimates per spec §7.1: safe = source + duration × ceiling
+bitrate / 8 × 1.05 (+1 MiB); reclaim = source × 1.01 (+1 MiB); ceiling is the
+`--bitrate` value or 190 kbps. Codec, sparse, relocate gate, stitch probe,
+and confirmation gates are still TODO (documented in §7).
 
 ### CLI
 ```text
@@ -202,17 +255,20 @@ Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
 
 ## 7. Next steps (ordered)
 
-1. **Audio engine** (`Sliding`) — WAV validation, `safe` via lame, `reclaim`
-   with forward-cursor invariant; splice-resume.
-2. **Video stitch spike** (`internal/lab/stitch`) — MKV `Cues` plan, cached-header byte ranges, tail-first assembly, fault sensitivity. This gates `RelocateEngine`.
-3. **RemuxEngine** (MKV→MP4 `safe`) — ffmpeg remux, track policy flags, verification.
-4. **RelocateEngine** — planner, per-segment protocol, sparse reserve, free-box assembly, pre-flight stitch probe, exact resume.
-5. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
-6. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
-7. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers.
+1. **Video stitch spike** (`internal/lab/stitch`) — MKV `Cues` plan, cached-header byte ranges, tail-first assembly, fault sensitivity. This gates `RelocateEngine`.
+2. **RemuxEngine** (MKV→MP4 `safe`) — ffmpeg remux, track policy flags, verification.
+3. **RelocateEngine** — planner, per-segment protocol, sparse reserve, free-box assembly, pre-flight stitch probe, exact resume.
+4. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
+5. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
+6. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers.
 
 Done: platform/journal (`7f43f93`), image engine `AtomicCopy` +
-`internal/imaging` (this checkpoint's working tree, committed alongside).
+`internal/imaging` (`b842dbf`), audio engine `Sliding` + `internal/wav` +
+`internal/recover` (this checkpoint's working tree, committed alongside).
+Phase 3 end-to-end checks on this host: safe/reclaim conversion; SIGKILL
+mid-reclaim → `siphon recover` (1800 s file decodes to 1800.07 s); SIGINT →
+exit 130, journal kept, recover finishes; crash windows before truncate,
+after truncate, and after rename covered by tests.
 
 ---
 
@@ -237,5 +293,25 @@ Done: platform/journal (`7f43f93`), image engine `AtomicCopy` +
   when they are not flocked. Contract for every engine: hold `platform.LockFile`
   on a temp for as long as it is live. Violating it risks losing an active
   temp (bounded by the 1 h age check).
+- **Reclaim margin**: §4.4.1's literal `MARGIN = max(1 MiB, 4×1441, 2×8 MiB)
+  = 16 MiB` invariant (`write + margin ≤ read`) can never hold for sources
+  smaller than ~16 MiB plus output, so it would stall forever. Implementation:
+  enforce the margin while the encoder is still being fed, then switch to the
+  plain `write ≤ read` invariant at input EOF and flush the endgame backlog.
+  The crash-safety property is unchanged; only the in-flight gap behind the
+  read cursor is bounded by the margin.
+- **Reclaim rename**: §4.4.1's step list ends at truncate + journal unlink, but
+  "output in its place" requires moving the truncated inode from `foo.wav` to
+  `foo.mp3`. Protocol: `finalising` checkpoint → ftruncate → fdatasync →
+  `renameat2` → journal remove. Recovery accepts the inode at either path and
+  `VerifySource` accepts both the original and the write-cursor size during
+  `finalising`.
+- **Reclaim pipe output has no Xing header** (LAME only writes it for file
+  output). Deliberate: the frame scanner is authoritative for resume, and
+  `verifyMP3` measures duration by full decode rather than the container
+  estimate. `safe` output does carry Xing and decodes to source length.
+- **WAV metadata** (LIST/INFO, `bext`) is not carried into MP3 yet: the file
+  is refused with `E_METADATA_DROP` unless `--drop-metadata`, matching the
+  spec's never-silent rule. A future tag transplant can lift this.
 - WebP end-to-end paths are untested on this host (`libwebp-tools` missing);
   `cwebp` dropping metadata surfaces as `E_METADATA_DROP` per §4.2.

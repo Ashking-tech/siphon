@@ -14,6 +14,9 @@ make test
 ./bin/siphon doctor
 ./bin/siphon inspect photo.png --to jpg
 ./bin/siphon convert photo.png --to jpg --bg white
+./bin/siphon convert song.wav --to mp3                    # safe
+./bin/siphon convert song.wav --to mp3 --mode reclaim --yes  # in-place
+./bin/siphon recover song.wav                             # after a crash
 ./bin/siphon inspect movie.mkv --to mp4
 ```
 
@@ -23,7 +26,8 @@ Runtime dependencies: `ffmpeg`/`ffprobe` ≥ 5.0, `lame` ≥ 3.100;
 ## Status
 
 Working end to end: CLI (`convert`, `inspect`, `recover`, `doctor`,
-`version`), pre-flight gate, journal, platform layer, and the image engine
-(`AtomicCopy`, PNG/JPEG/WebP with ICC/EXIF/XMP transplant and alpha policy).
-Audio (`Sliding`) and video (`Remux`/`Relocate`) engines are next, in the
-order documented in `context.md`.
+`version`), pre-flight gate, journal, platform layer, the image engine
+(`AtomicCopy`, PNG/JPEG/WebP with ICC/EXIF/XMP transplant and alpha policy),
+and the audio engine (`Sliding`, WAV→MP3 `safe` and `reclaim` with
+crash-safe splice-resume via `siphon recover`). Video (`Remux`/`Relocate`)
+engines are next, in the order documented in `context.md`.

@@ -46,7 +46,7 @@ func (e *Engine) Convert(ctx context.Context, job *core.Job, plan *core.Plan, si
 
 	dir := filepath.Dir(job.SourcePath)
 	stem := stemOf(job.SourcePath)
-	snap, err := takeSnapshot(job.SourcePath)
+	snap, err := platform.TakeSnapshot(job.SourcePath)
 	if err != nil {
 		return nil, untouched(err)
 	}
@@ -86,7 +86,7 @@ func (e *Engine) Convert(ctx context.Context, job *core.Job, plan *core.Plan, si
 	if err := ctx.Err(); err != nil {
 		return nil, interrupted(err)
 	}
-	if err := checkSnapshot(job.SourcePath, snap); err != nil {
+	if err := snap.Check(job.SourcePath); err != nil {
 		return nil, untouched(err)
 	}
 
@@ -143,7 +143,7 @@ func (e *Engine) Convert(ctx context.Context, job *core.Job, plan *core.Plan, si
 		return nil, untouched(err)
 	}
 
-	if err := checkSnapshot(job.SourcePath, snap); err != nil {
+	if err := snap.Check(job.SourcePath); err != nil {
 		return nil, untouched(err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -179,38 +179,6 @@ func (e *Engine) Convert(ctx context.Context, job *core.Job, plan *core.Plan, si
 func stemOf(path string) string {
 	base := filepath.Base(path)
 	return strings.TrimSuffix(base, filepath.Ext(base))
-}
-
-type sourceSnapshot struct {
-	dev     uint64
-	ino     uint64
-	size    int64
-	mtimeNS int64
-}
-
-func takeSnapshot(path string) (sourceSnapshot, error) {
-	var st unix.Stat_t
-	if err := unix.Stat(path, &st); err != nil {
-		return sourceSnapshot{}, siphonerr.Wrap(siphonerr.SourceInvalid, err, "cannot stat %s", path)
-	}
-	return sourceSnapshot{
-		dev:     uint64(st.Dev),
-		ino:     st.Ino,
-		size:    st.Size,
-		mtimeNS: st.Mtim.Nano(),
-	}, nil
-}
-
-func checkSnapshot(path string, want sourceSnapshot) error {
-	got, err := takeSnapshot(path)
-	if err != nil {
-		return err
-	}
-	if got != want {
-		return siphonerr.New(siphonerr.SourceChanged,
-			"%s changed while it was being converted; nothing was replaced", path)
-	}
-	return nil
 }
 
 // untouched marks an error as leaving the source byte-identical. Context

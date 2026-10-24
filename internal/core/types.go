@@ -38,6 +38,9 @@ type Job struct {
 	SkipProbe        bool
 	Timeout          time.Duration
 	JSON             bool
+
+	// Tools records the versions verified at pre-flight, for the journal.
+	Tools map[string]string
 }
 
 // Plan is the result of a successful pre-flight. It is also the payload of
@@ -70,6 +73,12 @@ type Plan struct {
 	ImageHeight int      `json:"image_height,omitempty"`
 	HasAlpha    bool     `json:"has_alpha,omitempty"`
 	Metadata    []string `json:"metadata,omitempty"`
+
+	// Audio-specific plan details.
+	AudioChannels   int      `json:"audio_channels,omitempty"`
+	AudioSampleRate int      `json:"audio_sample_rate,omitempty"`
+	AudioDurationMS int64    `json:"audio_duration_ms,omitempty"`
+	AudioTags       []string `json:"audio_tags,omitempty"`
 }
 
 // Segment is one keyframe-aligned byte range in a relocate plan.

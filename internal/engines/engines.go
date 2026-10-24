@@ -6,9 +6,11 @@ package engines
 import (
 	"siphon/internal/engine"
 	"siphon/internal/engine/atomiccopy"
+	"siphon/internal/engine/sliding"
 	"siphon/internal/formats"
 )
 
 func init() {
 	engine.Register(formats.EngineAtomicCopy, atomiccopy.New())
+	engine.Register(formats.EngineSliding, sliding.New())
 }

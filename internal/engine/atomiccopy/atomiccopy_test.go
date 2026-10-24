@@ -333,17 +333,17 @@ func TestForceReplacesTarget(t *testing.T) {
 func TestCheckSnapshotDetectsChange(t *testing.T) {
 	dir := t.TempDir()
 	src := writeFile(t, dir, "photo.png", makePNG(t, 4, 4, false), 0o600)
-	snap, err := takeSnapshot(src)
+	snap, err := platform.TakeSnapshot(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkSnapshot(src, snap); err != nil {
+	if err := snap.Check(src); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(src, []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkSnapshot(src, snap); !siphonerr.IsCode(err, siphonerr.SourceChanged) {
+	if err := snap.Check(src); !siphonerr.IsCode(err, siphonerr.SourceChanged) {
 		t.Fatalf("got %v, want E_SOURCE_CHANGED", err)
 	}
 }

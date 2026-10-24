@@ -3,11 +3,16 @@ package preflight
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,5 +223,233 @@ func TestTargetPath(t *testing.T) {
 	}
 	if got := TargetPath("a.b.png", formats.JPG); got != "a.b.jpg" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+// --- audio (WAV → MP3) -----------------------------------------------------
+
+func skipWithoutTool(t *testing.T, name string) {
+	t.Helper()
+	if _, err := exec.LookPath(name); err != nil {
+		t.Skipf("skipping: %s is not installed", name)
+	}
+}
+
+// wavBytes builds a WAV with an optional LIST/INFO chunk and bext chunk.
+func wavBytes(channels, sampleRate int, seconds float64, info map[string]string, bext bool) []byte {
+	frames := int(float64(sampleRate) * seconds)
+	data := make([]byte, frames*channels*2)
+	for i := 0; i < frames; i++ {
+		v := uint16(int16(math.Sin(2*math.Pi*440*float64(i)/float64(sampleRate)) * 9000))
+		for c := 0; c < channels; c++ {
+			binary.LittleEndian.PutUint16(data[(i*channels+c)*2:], v)
+		}
+	}
+
+	var payload bytes.Buffer
+	payload.WriteString("fmt ")
+	_ = binary.Write(&payload, binary.LittleEndian, uint32(16))
+	_ = binary.Write(&payload, binary.LittleEndian, uint16(1))
+	_ = binary.Write(&payload, binary.LittleEndian, uint16(channels))
+	_ = binary.Write(&payload, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(&payload, binary.LittleEndian, uint32(sampleRate*channels*2))
+	_ = binary.Write(&payload, binary.LittleEndian, uint16(channels*2))
+	_ = binary.Write(&payload, binary.LittleEndian, uint16(16))
+
+	if len(info) > 0 {
+		var list bytes.Buffer
+		list.WriteString("INFO")
+		keys := make([]string, 0, len(info))
+		for k := range info {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := info[k]
+			list.WriteString(k)
+			_ = binary.Write(&list, binary.LittleEndian, uint32(len(v)))
+			list.WriteString(v)
+			if len(v)%2 == 1 {
+				list.WriteByte(0)
+			}
+		}
+		payload.WriteString("LIST")
+		_ = binary.Write(&payload, binary.LittleEndian, uint32(list.Len()))
+		payload.Write(list.Bytes())
+	}
+
+	if bext {
+		b := make([]byte, 602)
+		copy(b, "Siphon test broadcast wave")
+		payload.WriteString("bext")
+		_ = binary.Write(&payload, binary.LittleEndian, uint32(len(b)))
+		payload.Write(b)
+	}
+
+	payload.WriteString("data")
+	_ = binary.Write(&payload, binary.LittleEndian, uint32(len(data)))
+	payload.Write(data)
+
+	var out bytes.Buffer
+	out.WriteString("RIFF")
+	_ = binary.Write(&out, binary.LittleEndian, uint32(payload.Len()+4))
+	out.WriteString("WAVE")
+	out.Write(payload.Bytes())
+	return out.Bytes()
+}
+
+func writeWAVFixture(t *testing.T, dir, name string, channels, sampleRate int, seconds float64, info map[string]string, bext bool) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, wavBytes(channels, sampleRate, seconds, info, bext), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func wavJob(t *testing.T, srcPath string, mode formats.Mode) *core.Job {
+	t.Helper()
+	pair, ok := formats.Lookup(formats.WAV, formats.MP3)
+	if !ok {
+		t.Fatal("pair wav → mp3 missing")
+	}
+	return &core.Job{
+		SourcePath: srcPath,
+		TargetPath: TargetPath(srcPath, formats.MP3),
+		Source:     formats.WAV,
+		Target:     formats.MP3,
+		Pair:       pair,
+		Mode:       mode,
+		Yes:        true,
+		Timeout:    time.Hour,
+		AllowRoot:  os.Geteuid() == 0,
+	}
+}
+
+func TestPlanWAVReclaim(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := writeWAVFixture(t, dir, "tone.wav", 2, 44100, 2, nil, false)
+
+	plan, err := Run(context.Background(), wavJob(t, src, formats.ModeReclaim))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "reclaim" || plan.Engine != "sliding" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	// spec §7.1: reclaim needs source × 1.01 plus a 1 MiB cushion.
+	srcSize := plan.SourceSize
+	if plan.FreeNeeded < srcSize*101/100 {
+		t.Fatalf("free estimate %d is below source×1.01 (%d)", plan.FreeNeeded, srcSize)
+	}
+	if plan.FreeNeeded > srcSize*101/100+2*mib {
+		t.Fatalf("free estimate %d is unreasonably above source×1.01", plan.FreeNeeded)
+	}
+	if plan.AudioChannels != 2 || plan.AudioSampleRate != 44100 {
+		t.Fatalf("audio shape not reported: %+v", plan)
+	}
+	if plan.AudioDurationMS < 1900 || plan.AudioDurationMS > 2100 {
+		t.Fatalf("duration %d ms", plan.AudioDurationMS)
+	}
+	if !strings.Contains(plan.CrashCost, "splice") {
+		t.Fatalf("crash cost does not mention the splice: %q", plan.CrashCost)
+	}
+}
+
+func TestPlanWAVSafeEstimate(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := writeWAVFixture(t, dir, "tone.wav", 2, 44100, 2, nil, false)
+
+	plan, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "safe" || plan.Engine != "sliding" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	// 2 s at the 190 kbps VBR ceiling, +5%.
+	estOut := int64(2 * 190000 / 8 * 105 / 100)
+	if plan.FreeNeeded < plan.SourceSize+estOut {
+		t.Fatalf("free estimate %d is below source+estimate (%d)", plan.FreeNeeded, plan.SourceSize+estOut)
+	}
+	if !strings.Contains(plan.CrashCost, "untouched") {
+		t.Fatalf("crash cost = %q", plan.CrashCost)
+	}
+
+	// An explicit --bitrate raises the estimate.
+	job := wavJob(t, src, formats.ModeSafe)
+	job.Bitrate = 320
+	hi, err := Run(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hi.FreeNeeded <= plan.FreeNeeded {
+		t.Fatalf("320 kbps estimate %d not above the VBR estimate %d", hi.FreeNeeded, plan.FreeNeeded)
+	}
+}
+
+func TestRefuseWAVMultichannel(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := writeWAVFixture(t, dir, "surround.wav", 4, 44100, 1, nil, false)
+
+	_, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
+	if !siphonerr.IsCode(err, siphonerr.FormatUnsupported) {
+		t.Fatalf("got %v, want E_FORMAT_UNSUPPORTED", err)
+	}
+}
+
+func TestRefuseWAVMetadata(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := writeWAVFixture(t, dir, "tagged.wav", 2, 44100, 1,
+		map[string]string{"INAM": "Take One", "IART": "Someone"}, false)
+
+	_, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
+	if !siphonerr.IsCode(err, siphonerr.MetadataDrop) {
+		t.Fatalf("got %v, want E_METADATA_DROP", err)
+	}
+	if !siphonerr.SourceUntouched(err) {
+		t.Fatalf("refusal must leave the source untouched: %v", err)
+	}
+
+	job := wavJob(t, src, formats.ModeSafe)
+	job.DropMetadata = true
+	plan, err := Run(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.AudioTags) != 2 {
+		t.Fatalf("plan should list the dropped tags: %+v", plan.AudioTags)
+	}
+	joined := strings.Join(plan.Warnings, "\n")
+	if !strings.Contains(joined, "will not be carried") {
+		t.Fatalf("warnings = %v", plan.Warnings)
+	}
+}
+
+func TestRefuseWAVBext(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := writeWAVFixture(t, dir, "bwf.wav", 1, 44100, 1, nil, true)
+
+	_, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
+	if !siphonerr.IsCode(err, siphonerr.MetadataDrop) {
+		t.Fatalf("got %v, want E_METADATA_DROP", err)
+	}
+}
+
+func TestRefuseWAVCorrupt(t *testing.T) {
+	skipWithoutTool(t, "lame")
+	dir := t.TempDir()
+	src := filepath.Join(dir, "broken.wav")
+	if err := os.WriteFile(src, []byte("RIFF####WAVEjunk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
+	if !siphonerr.IsCode(err, siphonerr.SourceCorrupt) {
+		t.Fatalf("got %v, want E_SOURCE_CORRUPT", err)
 	}
 }

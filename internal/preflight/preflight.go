@@ -21,6 +21,7 @@ import (
 	"siphon/internal/media"
 	"siphon/internal/platform"
 	"siphon/internal/siphonerr"
+	"siphon/internal/wav"
 )
 
 const (
@@ -96,17 +97,37 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	}
 
 	// 17 (early, because probing needs the tools). Dependencies.
-	if _, err := media.Check(ctx, media.RequiredFor(job.Pair.Source, job.Pair.Target)); err != nil {
+	toolVersions, err := media.Check(ctx, media.RequiredFor(job.Pair.Source, job.Pair.Target))
+	if err != nil {
 		return nil, refuse(err)
 	}
+	job.Tools = toolVersions
 
-	// 8/13/15. Probe and validate the container. MKV video needs a probe for
-	// its space model; audio reclaim needs duration for the R ≤ 0.90 gate.
+	// 8/13/15. Probe and validate the container. MKV video needs an ffprobe
+	// pass for its space model; WAV is read from its own header, which is
+	// also what the reclaim cursor and the R ≤ 0.90 gate need.
 	var probe *media.Probe
-	if job.Pair.Source == formats.MKV || job.Pair.Source == formats.WAV {
+	if job.Pair.Source == formats.MKV {
 		probe, err = media.ProbeFile(ctx, job.SourcePath)
 		if err != nil {
 			return nil, refuse(err)
+		}
+	}
+	var wavInfo *wav.Info
+	if job.Pair.Source == formats.WAV {
+		wavInfo, err = wav.Parse(job.SourcePath)
+		if err != nil {
+			return nil, refuse(err)
+		}
+		if wavInfo.Channels > 2 {
+			return nil, refuse(siphonerr.New(siphonerr.FormatUnsupported,
+				"%s has %d channels; Siphon converts mono and stereo WAV only",
+				job.SourcePath, wavInfo.Channels))
+		}
+		if !job.DropMetadata && wavInfo.HasMetadata() {
+			return nil, refuse(siphonerr.New(siphonerr.MetadataDrop,
+				"%s carries WAV metadata (%s) that cannot be put into an MP3; pass --drop-metadata to accept this",
+				job.SourcePath, strings.Join(wavInfo.MetadataNames(), ", ")))
 		}
 	}
 
@@ -167,7 +188,7 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	}
 
 	// 10. Free space (and 11/12 where applicable).
-	needed, warnings, err := estimateFree(ctx, job, info.Size(), probe, imageInfo)
+	needed, warnings, err := estimateFree(ctx, job, info.Size(), probe, wavInfo, imageInfo)
 	if err != nil {
 		return nil, refuse(err)
 	}
@@ -227,6 +248,14 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 			plan.Metadata = imageInfo.Metadata.Classes()
 		}
 	}
+	if wavInfo != nil {
+		plan.AudioChannels = wavInfo.Channels
+		plan.AudioSampleRate = wavInfo.SampleRate
+		plan.AudioDurationMS = wavInfo.Duration.Milliseconds()
+		if wavInfo.HasMetadata() {
+			plan.AudioTags = wavInfo.MetadataNames()
+		}
+	}
 	return plan, nil
 }
 
@@ -255,7 +284,7 @@ func Stem(path string) string {
 	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
-func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *media.Probe, imageInfo *imaging.Info) (int64, []string, error) {
+func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *media.Probe, wavInfo *wav.Info, imageInfo *imaging.Info) (int64, []string, error) {
 	var warnings []string
 	var needed int64
 
@@ -275,19 +304,31 @@ func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *m
 				"safe mode builds a classic MP4 and needs about 2× the source space")
 		}
 	case job.Pair.Source == formats.WAV:
-		if probe != nil && job.Mode == formats.ModeReclaim {
-			estOut := int64(probe.DurationSeconds() * 190_000 / 8 * 1.05)
-			if sourceSize > 0 && float64(estOut)/float64(sourceSize) > 0.90 {
+		if wavInfo == nil {
+			needed = sourceSize*2 + 2*mib
+			break
+		}
+		estOut := int64(wavInfo.Duration.Seconds() * float64(wavCeilingBitrate(job)) / 8)
+		switch job.Mode {
+		case formats.ModeReclaim:
+			// 11. The forward cursor only holds if the output stays behind
+			// the read position with margin: R ≤ 0.90 (spec §3.4).
+			if sourceSize > 0 && float64(estOut) > 0.90*float64(sourceSize) {
 				return 0, nil, siphonerr.New(siphonerr.InplaceInfeasible,
 					"reclaim needs estimated MP3 ≤ 90%% of the WAV; this file estimates %.0f%% (use --mode safe)",
 					100*float64(estOut)/float64(sourceSize))
 			}
-		}
-		if job.Mode == formats.ModeReclaim {
 			needed = sourceSize*101/100 + mib
-		} else {
-			needed = sourceSize*115/100 + 2*mib
+		default:
+			// spec §7.1: source + duration × ceiling_bitrate / 8 × 1.05
+			needed = sourceSize + estOut + estOut/20 + mib
 		}
+		if job.DropMetadata && wavInfo.HasMetadata() {
+			warnings = append(warnings,
+				fmt.Sprintf("--drop-metadata set: WAV metadata (%s) will not be carried",
+					strings.Join(wavInfo.MetadataNames(), ", ")))
+		}
+		warnings = append(warnings, wavInfo.Warnings...)
 	case isImage(job.Pair.Source):
 		if imageInfo != nil {
 			// spec §7.1: source + max(2 × source, decoded_raw × 1.5) + 2 MiB
@@ -306,6 +347,16 @@ func estimateFree(ctx context.Context, job *core.Job, sourceSize int64, probe *m
 		needed = math.MaxInt64
 	}
 	return needed, warnings, nil
+}
+
+// wavCeilingBitrate is the pessimistic output bitrate for the space estimate
+// and the reclaim ratio: the LAME -V 2 ceiling of 190 kbps, or the requested
+// CBR bitrate.
+func wavCeilingBitrate(job *core.Job) int64 {
+	if job.Bitrate > 0 {
+		return int64(job.Bitrate) * 1000
+	}
+	return 190_000
 }
 
 func segmentBytes(d time.Duration, bitrate int64) int64 {
@@ -405,8 +456,15 @@ func FormatPlan(p *core.Plan) string {
 		}
 		fmt.Fprintf(&b, "  image       %dx%d%s\n", p.ImageWidth, p.ImageHeight, alpha)
 	}
+	if p.AudioChannels > 0 {
+		fmt.Fprintf(&b, "  audio       %d Hz, %d ch, %s\n",
+			p.AudioSampleRate, p.AudioChannels, humanDuration(time.Duration(p.AudioDurationMS)*time.Millisecond))
+	}
 	if len(p.Metadata) > 0 {
 		fmt.Fprintf(&b, "  metadata    %s\n", strings.Join(p.Metadata, ", "))
+	}
+	if len(p.AudioTags) > 0 {
+		fmt.Fprintf(&b, "  tags        %s (dropped)\n", strings.Join(p.AudioTags, ", "))
 	}
 	fmt.Fprintf(&b, "  free needed %s     you have %s\n", p.FreeNeededHuman, p.FreeAvailableHuman)
 	fmt.Fprintf(&b, "  crash cost  %s\n", p.CrashCost)
@@ -414,4 +472,13 @@ func FormatPlan(p *core.Plan) string {
 		fmt.Fprintf(&b, "  warning     %s\n", w)
 	}
 	return b.String()
+}
+
+func humanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	m := d / time.Minute
+	s := (d % time.Minute) / time.Second
+	return fmt.Sprintf("%dm%02ds", m, s)
 }

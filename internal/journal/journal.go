@@ -43,10 +43,30 @@ type Target struct {
 type Params struct {
 	SegmentDurationNS  int64  `json:"segment_duration_ns"`
 	SegmentToleranceNS int64  `json:"segment_tolerance_ns"`
-	PlanSource         string `json:"plan_source"`
-	Verify             string `json:"verify"`
-	DropIncompatible   bool   `json:"drop_incompatible"`
-	TranscodeAudio     bool   `json:"transcode_audio"`
+	PlanSource         string `json:"plan_source,omitempty"`
+	Verify             string `json:"verify,omitempty"`
+	DropIncompatible   bool   `json:"drop_incompatible,omitempty"`
+	TranscodeAudio     bool   `json:"transcode_audio,omitempty"`
+
+	// Audio reclaim: 0 bitrate means LAME VBR -V 2; otherwise CBR kbps.
+	// The WAV shape is journaled because reclaim destroys the source's own
+	// header, so a splice-resume cannot re-read it. Force records whether the
+	// final rename may replace an existing target.
+	Bitrate int          `json:"bitrate,omitempty"`
+	Force   bool         `json:"force,omitempty"`
+	Audio   *AudioParams `json:"audio,omitempty"`
+}
+
+// AudioParams is the WAV shape needed to rebuild a synthetic header for a
+// splice-resume after reclaim has overwritten the original one.
+type AudioParams struct {
+	DataOffset    int64 `json:"data_offset"`
+	DataEnd       int64 `json:"data_end"`
+	SampleRate    int   `json:"sample_rate"`
+	Channels      int   `json:"channels"`
+	BitsPerSample int   `json:"bits_per_sample"`
+	ByteRate      int64 `json:"byte_rate"`
+	BlockAlign    int   `json:"block_align"`
 }
 
 // Job is the immutable header of a job.
@@ -71,10 +91,13 @@ type Segment struct {
 	State   string `json:"state"`
 }
 
-// Cursors are the durable positions of a destructive engine.
+// Cursors are the durable positions of a destructive engine. Relocate uses
+// the tail/out pair; audio reclaim uses the read/write pair.
 type Cursors struct {
-	TailCursor    int64 `json:"tail_cursor"`
-	OutCursor     int64 `json:"out_cursor"`
+	TailCursor    int64 `json:"tail_cursor,omitempty"`
+	OutCursor     int64 `json:"out_cursor,omitempty"`
+	ReadCursor    int64 `json:"read_cursor,omitempty"`
+	WriteCursor   int64 `json:"write_cursor,omitempty"`
 	SourceMtimeNS int64 `json:"source_mtime_ns"`
 }
 
@@ -350,7 +373,7 @@ func (j *Journal) verifyCRC() error {
 }
 
 // VerifySource checks the fields that must match for this mode, per spec
-// §4.6.3. Destructive modes compare against the durable cursor.
+// §4.6.3. Destructive modes compare against their durable cursors.
 func VerifySource(j *Journal, path string) error {
 	var st unix.Stat_t
 	if err := unix.Stat(path, &st); err != nil {
@@ -361,14 +384,38 @@ func VerifySource(j *Journal, path string) error {
 	}
 
 	switch j.Job.Mode {
-	case "relocate", "reclaim":
-		if st.Size != j.Cursors.TailCursor && j.Job.Mode == "relocate" {
+	case "relocate":
+		if st.Size != j.Cursors.TailCursor {
 			return siphonerr.New(siphonerr.SourceChanged,
 				"source size %d does not match tail cursor %d", st.Size, j.Cursors.TailCursor)
 		}
-		if st.Mtim.Nano() != j.Cursors.SourceMtimeNS && j.Cursors.SourceMtimeNS != 0 {
+		if j.Cursors.SourceMtimeNS != 0 && st.Mtim.Nano() != j.Cursors.SourceMtimeNS {
 			return siphonerr.New(siphonerr.SourceChanged,
 				"source mtime changed since the last checkpoint")
+		}
+	case "reclaim":
+		// The engine writes into the source, so mtime moves with every
+		// checkpoint and cannot be compared. Until the final ftruncate the
+		// size must be the original; during finalising it may still be the
+		// original (crash before the truncate) or the write cursor (after);
+		// once complete it is always the write cursor.
+		switch j.Phase {
+		case "finalising":
+			if st.Size != j.Job.Source.Size && st.Size != j.Cursors.WriteCursor {
+				return siphonerr.New(siphonerr.SourceChanged,
+					"source size %d is neither the original %d nor the write cursor %d",
+					st.Size, j.Job.Source.Size, j.Cursors.WriteCursor)
+			}
+		case "complete":
+			if st.Size != j.Cursors.WriteCursor {
+				return siphonerr.New(siphonerr.SourceChanged,
+					"source size %d does not match write cursor %d", st.Size, j.Cursors.WriteCursor)
+			}
+		default:
+			if st.Size != j.Job.Source.Size {
+				return siphonerr.New(siphonerr.SourceChanged,
+					"source size %d does not match the original %d", st.Size, j.Job.Source.Size)
+			}
 		}
 	default:
 		if st.Size != j.Job.Source.Size || st.Mtim.Nano() != j.Job.Source.MtimeNS {
