@@ -38,6 +38,7 @@ Supported pairs: WAV→MP3, MKV→MP4, PNG/JPEG/WebP matrix. See `spec.md` §3.1
 | Preflight gate | checks 1–7, 14–18, 20 + WAV gate + space + image probe |
 | CLI skeleton | `convert`, `inspect`, `recover` (driver wired), `doctor`, `version` |
 | Imaging layer (decode, orientation, ICC/EXIF/XMP, WebP, verify) | implemented + tested |
+| Video stitch spike (`internal/lab/stitch`) | implemented + tested: Cues/scan plan, synthetic cluster boundaries, sparse reverse assembly, fault suite (`RESULTS.md`) |
 | Engines | AtomicCopy (images), Sliding (WAV→MP3 safe + reclaim) implemented + tested; Relocate / Remux not yet |
 | WAV parser (`internal/wav`) | implemented + tested (PCM + extensible, INFO/bext detection, header synth) |
 | Recovery driver (`internal/recover`) | implemented + tested (sliding splice-resume) |
@@ -48,6 +49,12 @@ work. `siphon convert` converts the image pairs and WAV→MP3 (safe and reclaim)
 end to end. A killed reclaim job is finished by `siphon recover <file>`
 (splice-resume, ~26 ms seam), including crashes after truncate or rename.
 `siphon recover` on a video/relocate journal still exits 4.
+
+The phase-4 video stitch spike passes on the 12 s H.264/AAC fixture: 3 segments,
+360/360 video and 518/518 audio packets, every output packet at source+34 ms
+(video worst deviation 0.000 ms), one-pass extraction (634148/634880 B), and
+sampled + full decode clean. `internal/lab/stitch/RESULTS.md` records the
+design and the fault-sensitivity matrix. It is a lab, not wired into the CLI.
 
 ---
 
@@ -79,6 +86,9 @@ end to end. A killed reclaim job is finished by `siphon recover <file>`
 | Reclaim finalise | `finalising` checkpoint → ftruncate → fdatasync → rename to target → journal remove | rename is what puts the MP3 "in place"; §4.4.1 omits it, recovery accepts both paths |
 | WAV metadata | LIST/INFO and `bext` refused with `E_METADATA_DROP` unless `--drop-metadata` | no tag transplant into MP3 yet; never silently dropped |
 | WAV formats | PCM (tag 1) and WAVE_FORMAT_EXTENSIBLE with PCM subformat; other tags `E_FORMAT_UNSUPPORTED`; >2 ch refused | spec §4.5.2, §6.7 |
+| Video boundaries | synthetic cluster split: every extraction starts at a keyframe; the previous segment carries the next cluster's leading B-frame/audio prefix | plain copy drops leading non-keyframes; `-copyinkf` gives them 1-tick durations and shifts the boundary 33 ms |
+| Video timestamps | re-anchor each segment/track; normalize cts to non-negative | the fragmented muxer rebases per run; the mov demuxer's `dts_shift` depends on parse order |
+| Video anchors | block PTS − CodecDelay | Matroska block timecodes are pre-delay (AAC priming 23 ms in the fixture) |
 | GUI architecture | engine remains UI-agnostic; GUI consumes `--json` + progress events | decision still open on toolkit; KDE wrapper first |
 | KDE progress | `kdialog --progressbar` via `qdbus6`, fallback `--passivepopup` | `qdbus6` missing on this host, fallback matters |
 
@@ -101,6 +111,7 @@ internal/imaging/               image decode/encode, orientation, ICC/EXIF/XMP, 
 internal/engine/                Engine interface + registry
 internal/engine/atomiccopy/     image engine: temp, alpha policy, verify, atomic rename (+ tests)
 internal/engine/sliding/        audio engine: lame safe/reclaim, invariant, MP3 frames, splice-resume (+ tests)
+internal/lab/stitch/            phase-4 video spike: EBML plan, synthetic segments, sparse assembly, verify, fault suite (+ RESULTS.md)
 internal/recover/               recovery driver: journal discovery, inode probe, engine dispatch (+ tests)
 internal/engines/               composition root: registers concrete engines
 internal/convert/               orchestrator: preflight → engine (+ tests)
@@ -168,6 +179,23 @@ first write remove the journal and report an untouched source; afterwards
 `siphon recover`. `ResumeReclaim(store, journal, sink)` scans complete frames
 in the written prefix, backs off one PCM frame, encodes the remainder through
 a synthetic WAV header, and finishes with the same idempotent finalisation.
+
+### Video stitch spike (`internal/lab/stitch`)
+`BuildPlan(ctx, path, Options, *IOStats) (*Plan, error)` parses the MKV
+header/Info/Tracks/Cues, picks one video + optional one audio track, derives
+keyframes from Cues (coverage ≥90 % of Duration) or an `ffprobe -show_packets`
+scan, snaps boundaries to the nearest keyframe within tolerance, and builds
+synthetic pieces. `Keyframe` carries the cluster/keyframe-block/Timecode/cluster-end
+offsets; `Segment.Pieces` are raw cluster ranges or wrapped Timecode+block
+ranges; `Plan.ExtractBytes` is the exact one-pass byte count. `Run(ctx, plan,
+outPath, Options) (*Report, error)` extracts tail-first (ffmpeg stream copy,
+cached header + pieces on stdin, no seeking), analyzes each fragment, strips the
+init, writes bodies backwards into a sparse `reserve = source×1.05 + 16 MiB`,
+writes a leading `free` box, re-anchors every traf's tfdt and normalizes cts,
+fsyncs/renames, and verifies. `Report.Checks` covers box chain, mfhd order, tfdt
+monotonicity, cts non-negativity, packet counts, start anchor, A/V sync,
+one-pass I/O, sampled decode, and optional full decode. `cmd/stitch` is the lab
+harness; `RESULTS.md` records the findings and fault matrix.
 
 ### Recovery (`internal/recover`)
 `Run(ctx, source, sink) (*core.Result, journalPath, error)` — finds the
@@ -255,16 +283,17 @@ Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
 
 ## 7. Next steps (ordered)
 
-1. **Video stitch spike** (`internal/lab/stitch`) — MKV `Cues` plan, cached-header byte ranges, tail-first assembly, fault sensitivity. This gates `RelocateEngine`.
-2. **RemuxEngine** (MKV→MP4 `safe`) — ffmpeg remux, track policy flags, verification.
-3. **RelocateEngine** — planner, per-segment protocol, sparse reserve, free-box assembly, pre-flight stitch probe, exact resume.
-4. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
-5. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
-6. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers.
+1. **RemuxEngine** (MKV→MP4 `safe`) — ffmpeg remux, track policy flags, verification.
+2. **RelocateEngine** — planner, per-segment protocol, sparse reserve, free-box assembly, pre-flight stitch probe, exact resume.
+3. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
+4. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
+5. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers.
 
 Done: platform/journal (`7f43f93`), image engine `AtomicCopy` +
 `internal/imaging` (`b842dbf`), audio engine `Sliding` + `internal/wav` +
-`internal/recover` (this checkpoint's working tree, committed alongside).
+`internal/recover` (`942d259`), phase-4 video stitch spike
+(`internal/lab/stitch`, `RESULTS.md`; this checkpoint's working tree,
+committed alongside). The spike gates `RelocateEngine`.
 Phase 3 end-to-end checks on this host: safe/reclaim conversion; SIGKILL
 mid-reclaim → `siphon recover` (1800 s file decodes to 1800.07 s); SIGINT →
 exit 130, journal kept, recover finishes; crash windows before truncate,
@@ -315,3 +344,17 @@ after truncate, and after rename covered by tests.
   spec's never-silent rule. A future tag transplant can lift this.
 - WebP end-to-end paths are untested on this host (`libwebp-tools` missing);
   `cwebp` dropping metadata surfaces as `E_METADATA_DROP` per §4.2.
+- **Video spike scope**: MKV→MP4, one video + one audio track, sized clusters
+  only (Cues and scan both require them), one boundary per cluster. Only
+  H.264/AAC were exercised; the stream-copy design is codec-agnostic but other
+  codecs need fixtures. The spike keeps the reserve-sized leading `free` box;
+  phase 5 must decide whether to keep or compact it.
+- **Synthetic cluster boundaries** are mandatory for clusters that start with
+  the previous GOP's trailing B-frames. `-copyinkf` is not a fix: the muxer
+  gives those frames 1-tick durations and shifts the boundary by one frame
+  interval. Non-cluster top-level elements between clusters are copied
+  verbatim; a mid-stream Cues would need a split-and-skip pass before the
+  relocate engine is production-grade.
+- **Sampled verification** decodes from each fragment's keyframe, so it cannot
+  validate a cross-fragment reference chain; the full assembled decode is the
+  authoritative check (and what the fault suite uses for `avcC`).
