@@ -68,6 +68,10 @@ type Plan struct {
 	CrashCost string   `json:"crash_cost"`
 	Warnings  []string `json:"warnings,omitempty"`
 
+	// MKV track policy details (remux/relocate).
+	Streams []string `json:"streams,omitempty"`
+	Dropped []string `json:"dropped,omitempty"`
+
 	// Image-specific plan details.
 	ImageWidth  int      `json:"image_width,omitempty"`
 	ImageHeight int      `json:"image_height,omitempty"`

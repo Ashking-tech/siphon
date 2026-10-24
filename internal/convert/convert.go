@@ -26,6 +26,12 @@ func Run(ctx context.Context, job *core.Job, sink progress.Sink) (*core.Result, 
 		return resultForErr(err, nil), err
 	}
 
+	if sink != nil {
+		for _, w := range plan.Warnings {
+			sink.Warn(w)
+		}
+	}
+
 	eng, ok := engine.Get(job.Engine)
 	if !ok {
 		err := siphonerr.New(siphonerr.Internal,

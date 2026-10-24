@@ -107,10 +107,46 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	// pass for its space model; WAV is read from its own header, which is
 	// also what the reclaim cursor and the R ≤ 0.90 gate need.
 	var probe *media.Probe
+	var trackPlan *media.TrackPlan
+	var mkvWarnings []string
 	if job.Pair.Source == formats.MKV {
 		probe, err = media.ProbeFile(ctx, job.SourcePath)
 		if err != nil {
 			return nil, refuse(err)
+		}
+		// 8. Codec/track compatibility (spec §4.5.3).
+		trackPlan, err = media.BuildTrackPlan(probe, media.TrackOptions{
+			DropIncompatible: job.DropIncompatible,
+			TranscodeAudio:   job.TranscodeAudio,
+			AllowNonstandard: job.AllowNonstandard,
+			Relocate:         job.Mode == formats.ModeRelocate,
+		})
+		if err != nil {
+			return nil, refuse(err)
+		}
+		// 9. Metadata classes that cannot be carried.
+		if !job.DropMetadata && (trackPlan.Attachments || trackPlan.Chapters) {
+			var lost []string
+			if trackPlan.Attachments {
+				lost = append(lost, "attachments")
+			}
+			if trackPlan.Chapters {
+				lost = append(lost, "chapters")
+			}
+			return nil, refuse(siphonerr.New(siphonerr.MetadataDrop,
+				"%s carries %s, which cannot be carried into MP4; pass --drop-metadata to accept this",
+				job.SourcePath, strings.Join(lost, " and ")))
+		}
+		mkvWarnings = append(mkvWarnings, trackPlan.Warnings...)
+		mkvWarnings = append(mkvWarnings, trackPlan.MetadataWarnings(job.DropMetadata)...)
+
+		// 13 (part). Relocate is remux-only and must not grow the file.
+		if job.Mode == formats.ModeRelocate {
+			if est := sumStreamBits(probe) / 8; est > 0 && est > info.Size()*103/100 {
+				return nil, refuse(siphonerr.New(siphonerr.InplaceInfeasible,
+					"relocate needs estimated output ≤ 103%% of the source; this file estimates %.0f%% (use --mode safe)",
+					100*float64(est)/float64(info.Size())))
+			}
 		}
 	}
 	var wavInfo *wav.Info
@@ -195,6 +231,7 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	if imageInfo != nil {
 		warnings = append(warnings, imageInfo.Warnings...)
 	}
+	warnings = append(warnings, mkvWarnings...)
 	free, err := platform.FreeSpace(dir)
 	if err != nil {
 		return nil, refuse(siphonerr.Wrap(siphonerr.NoSpace, err, "cannot read free space"))
@@ -225,7 +262,7 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		TargetFormat:       job.Target.String(),
 		Mode:               string(job.Mode),
 		Engine:             string(job.Engine),
-		OutputKind:         job.Pair.OutputKind,
+		OutputKind:         job.Pair.OutputKindFor(job.Mode),
 		Lossy:              job.Pair.Lossy,
 		SourceSize:         info.Size(),
 		FreeNeeded:         needed,
@@ -239,6 +276,10 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		plan.SegmentDuration = job.SegmentDuration.String()
 		plan.Verify = job.Verify
 		plan.PlanSource = "probe"
+	}
+	if trackPlan != nil {
+		plan.Streams = trackPlan.Describe()
+		plan.Dropped = trackPlan.Dropped
 	}
 	if imageInfo != nil {
 		plan.ImageWidth = imageInfo.Width
@@ -442,6 +483,12 @@ func FormatPlan(p *core.Plan) string {
 	fmt.Fprintf(&b, "  output      %s\n", p.OutputKind)
 	if p.PlanSource != "" {
 		fmt.Fprintf(&b, "  plan        %s\n", p.PlanSource)
+	}
+	if len(p.Streams) > 0 {
+		fmt.Fprintf(&b, "  streams     %s\n", strings.Join(p.Streams, ", "))
+	}
+	if len(p.Dropped) > 0 {
+		fmt.Fprintf(&b, "  dropping    %s\n", strings.Join(p.Dropped, ", "))
 	}
 	if p.Segments > 0 {
 		fmt.Fprintf(&b, "  segments    %d × %s\n", p.Segments, p.SegmentDuration)

@@ -64,6 +64,16 @@ var pairs = []Pair{
 	{WEBP, JPG, ModeSafe, []Mode{ModeSafe}, EngineAtomicCopy, true, "JPEG"},
 }
 
+// OutputKindFor returns the concrete output kind for a mode. Video is the only
+// pair whose container shape depends on the mode: relocate writes fragmented
+// MP4, safe writes classic MP4 (spec §3.1).
+func (p Pair) OutputKindFor(m Mode) string {
+	if p.Source == MKV && p.Target == MP4 && m == ModeSafe {
+		return "MP4"
+	}
+	return p.OutputKind
+}
+
 // Parse normalizes a user-supplied format name (".jpeg", "JPEG", "jpg").
 func Parse(s string) (Format, bool) {
 	s = strings.ToLower(strings.TrimSpace(s))

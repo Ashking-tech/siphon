@@ -46,6 +46,16 @@ func TestEngineFor(t *testing.T) {
 	}
 }
 
+func TestOutputKindFor(t *testing.T) {
+	mkv, _ := Lookup(MKV, MP4)
+	if got := mkv.OutputKindFor(ModeRelocate); got != "fragmented MP4" {
+		t.Errorf("relocate output kind = %q", got)
+	}
+	if got := mkv.OutputKindFor(ModeSafe); got != "MP4" {
+		t.Errorf("safe output kind = %q", got)
+	}
+}
+
 func TestParse(t *testing.T) {
 	for in, want := range map[string]Format{
 		".jpeg": JPG,

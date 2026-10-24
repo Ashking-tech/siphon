@@ -14,34 +14,49 @@ import (
 
 // Stream is the subset of ffprobe stream data Siphon uses.
 type Stream struct {
-	Index         int    `json:"index"`
-	CodecName     string `json:"codec_name"`
-	CodecLongName string `json:"codec_long_name"`
-	CodecType     string `json:"codec_type"`
-	CodecTag      string `json:"codec_tag_string"`
-	Width         int    `json:"width"`
-	Height        int    `json:"height"`
-	Channels      int    `json:"channels"`
-	ChannelLayout string `json:"channel_layout"`
-	SampleRate    string `json:"sample_rate"`
-	BitRate       string `json:"bit_rate"`
-	TimeBase      string `json:"time_base"`
-	Duration      string `json:"duration"`
+	Index         int               `json:"index"`
+	CodecName     string            `json:"codec_name"`
+	CodecLongName string            `json:"codec_long_name"`
+	CodecType     string            `json:"codec_type"`
+	CodecTag      string            `json:"codec_tag_string"`
+	Profile       string            `json:"profile"`
+	Level         int               `json:"level"`
+	Width         int               `json:"width"`
+	Height        int               `json:"height"`
+	Channels      int               `json:"channels"`
+	ChannelLayout string            `json:"channel_layout"`
+	SampleRate    string            `json:"sample_rate"`
+	BitRate       string            `json:"bit_rate"`
+	TimeBase      string            `json:"time_base"`
+	Duration      string            `json:"duration"`
+	Extradata     string            `json:"extradata,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
 }
 
 // FormatInfo is the subset of ffprobe container data Siphon uses.
 type FormatInfo struct {
-	Filename   string `json:"filename"`
-	FormatName string `json:"format_name"`
-	Duration   string `json:"duration"`
-	Size       string `json:"size"`
-	BitRate    string `json:"bit_rate"`
+	Filename   string            `json:"filename"`
+	FormatName string            `json:"format_name"`
+	Duration   string            `json:"duration"`
+	Size       string            `json:"size"`
+	BitRate    string            `json:"bit_rate"`
+	Tags       map[string]string `json:"tags,omitempty"`
+}
+
+// Chapter is one container chapter.
+type Chapter struct {
+	ID       int64             `json:"id"`
+	TimeBase string            `json:"time_base"`
+	Start    int64             `json:"start"`
+	End      int64             `json:"end"`
+	Tags     map[string]string `json:"tags,omitempty"`
 }
 
 // Probe is a single ffprobe pass.
 type Probe struct {
-	Streams []Stream   `json:"streams"`
-	Format  FormatInfo `json:"format"`
+	Streams  []Stream   `json:"streams"`
+	Format   FormatInfo `json:"format"`
+	Chapters []Chapter  `json:"chapters,omitempty"`
 }
 
 // ProbeFile runs ffprobe once and parses the JSON.
@@ -51,7 +66,7 @@ func ProbeFile(ctx context.Context, path string) (*Probe, error) {
 
 	cmd := exec.CommandContext(ctx, "ffprobe",
 		"-v", "error",
-		"-show_format", "-show_streams",
+		"-show_format", "-show_streams", "-show_chapters",
 		"-of", "json",
 		"-i", path,
 	)

@@ -45,7 +45,7 @@ func newConvertCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("converted %s → %s (%s, %s)\n",
-				job.SourcePath, job.TargetPath, job.Mode, job.Pair.OutputKind)
+				job.SourcePath, job.TargetPath, job.Mode, job.Pair.OutputKindFor(job.Mode))
 			return nil
 		},
 	}
