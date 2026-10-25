@@ -16,7 +16,9 @@ make test
 ./bin/siphon convert photo.png --to jpg --bg white
 ./bin/siphon convert song.wav --to mp3                    # safe
 ./bin/siphon convert song.wav --to mp3 --mode reclaim --yes  # in-place
-./bin/siphon recover song.wav                             # after a crash
+./bin/siphon convert movie.mkv --to mp4                   # relocate (default)
+./bin/siphon convert movie.mkv --to mp4 --mode safe       # classic MP4
+./bin/siphon recover movie.mkv                            # after a crash
 ./bin/siphon inspect movie.mkv --to mp4
 ```
 
@@ -28,6 +30,8 @@ Runtime dependencies: `ffmpeg`/`ffprobe` ≥ 5.0, `lame` ≥ 3.100;
 Working end to end: CLI (`convert`, `inspect`, `recover`, `doctor`,
 `version`), pre-flight gate, journal, platform layer, the image engine
 (`AtomicCopy`, PNG/JPEG/WebP with ICC/EXIF/XMP transplant and alpha policy),
-and the audio engine (`Sliding`, WAV→MP3 `safe` and `reclaim` with
-crash-safe splice-resume via `siphon recover`). Video (`Remux`/`Relocate`)
-engines are next, in the order documented in `context.md`.
+the audio engine (`Sliding`, WAV→MP3 `safe` and `reclaim` with crash-safe
+splice-resume), and both video engines: `Remux` (MKV→MP4 `safe`) and
+`Relocate` (default MKV→fragmented MP4, tail-first journaled segments with
+exact `siphon recover`). KDE integration and the GUI are next; see
+`context.md` for the phase status and open verification items.

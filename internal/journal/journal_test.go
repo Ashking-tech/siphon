@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCreateSaveLoad(t *testing.T) {
@@ -110,5 +111,56 @@ func TestVerifySource(t *testing.T) {
 	}
 	if err := VerifySource(j, src); err == nil {
 		t.Fatal("changed source accepted")
+	}
+}
+
+func TestVerifySourceRelocateTruncateWindow(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "film.mkv")
+	if err := os.WriteFile(src, make([]byte, 300), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &Journal{
+		Job:      Job{Mode: "relocate", Source: s},
+		Segments: []Segment{{I: 0, SrcOff: 100, SrcEnd: 300, State: "truncating"}},
+		Cursors: Cursors{
+			TailCursor:    100,
+			TruncateFrom:  200,
+			Truncating:    true,
+			SourceMtimeNS: s.MtimeNS,
+		},
+	}
+
+	// The pre-truncate window is the previous tail cursor (200), not this
+	// segment's SrcEnd (300). Restore the mtime that ftruncate moved.
+	if err := os.Truncate(src, 200); err != nil {
+		t.Fatal(err)
+	}
+	mt := time.Unix(0, s.MtimeNS)
+	if err := os.Chtimes(src, mt, mt); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySource(j, src); err != nil {
+		t.Fatalf("pre-truncate window rejected: %v", err)
+	}
+
+	// The post-truncate window accepts the tail cursor regardless of mtime.
+	if err := os.Truncate(src, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySource(j, src); err != nil {
+		t.Fatalf("post-truncate window rejected: %v", err)
+	}
+
+	// A size that is neither end of the window is an external change.
+	if err := os.Truncate(src, 150); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySource(j, src); err == nil {
+		t.Fatal("intermediate size accepted")
 	}
 }

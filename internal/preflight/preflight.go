@@ -21,6 +21,7 @@ import (
 	"siphon/internal/media"
 	"siphon/internal/platform"
 	"siphon/internal/siphonerr"
+	"siphon/internal/stitch"
 	"siphon/internal/wav"
 )
 
@@ -123,6 +124,16 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		})
 		if err != nil {
 			return nil, refuse(err)
+		}
+		// Relocate's fixed -map cannot drop A/V streams, so a policy that
+		// would drop one is not an in-place option; safe mode can.
+		if job.Mode == formats.ModeRelocate {
+			for _, d := range trackPlan.Dropped {
+				if strings.HasPrefix(d, "video:") || strings.HasPrefix(d, "audio:") {
+					return nil, refuse(siphonerr.New(siphonerr.InplaceInfeasible,
+						"relocate cannot drop %s during segmented extraction; use --mode safe", d))
+				}
+			}
 		}
 		// 9. Metadata classes that cannot be carried.
 		if !job.DropMetadata && (trackPlan.Attachments || trackPlan.Chapters) {
@@ -255,6 +266,27 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		}
 	}
 
+	// 13. Constant track config and enough keyframe-aligned boundaries.
+	var stitchPlan *stitch.Plan
+	if job.Mode == formats.ModeRelocate {
+		if err := checkRelocateConfig(ctx, job.SourcePath, trackPlan); err != nil {
+			return nil, refuse(err)
+		}
+		stitchPlan, err = stitch.BuildPlan(ctx, job.SourcePath, stitch.Options{
+			SegmentDuration:  job.SegmentDuration,
+			SegmentTolerance: job.SegmentTolerance,
+			VerifyFrames:     job.VerifyFrames,
+		}, nil)
+		if err != nil {
+			return nil, refuse(err)
+		}
+		if len(stitchPlan.Segments) < 3 {
+			return nil, refuse(siphonerr.New(siphonerr.InplaceInfeasible,
+				"relocate needs at least 3 keyframe-aligned segments; %s yields %d (use --mode safe)",
+				job.SourcePath, len(stitchPlan.Segments)))
+		}
+	}
+
 	plan := &core.Plan{
 		Source:             job.SourcePath,
 		Target:             job.TargetPath,
@@ -275,7 +307,10 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	if job.Mode == formats.ModeRelocate {
 		plan.SegmentDuration = job.SegmentDuration.String()
 		plan.Verify = job.Verify
-		plan.PlanSource = "probe"
+		if stitchPlan != nil {
+			plan.Segments = len(stitchPlan.Segments)
+			plan.PlanSource = stitchPlan.PlanSource
+		}
 	}
 	if trackPlan != nil {
 		plan.Streams = trackPlan.Describe()
@@ -298,6 +333,61 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// checkRelocateConfig probes the head, middle, and tail of the source and
+// requires every retained stream's decoder configuration to be byte-identical.
+// A mid-file SPS/PPS or audio parameter change would make a segment copied
+// behind the head's cached header undecodable, so relocate must refuse it.
+func checkRelocateConfig(ctx context.Context, path string, tp *media.TrackPlan) error {
+	return checkRelocateConfigWith(ctx, path, tp, media.ProbeAt)
+}
+
+// checkRelocateConfigWith is the testable form of the three-point track
+// configuration probe. probeAt is injected so the refusal logic can be tested
+// without manufacturing a file whose SPS changes mid-stream.
+func checkRelocateConfigWith(ctx context.Context, path string, tp *media.TrackPlan,
+	probeAt func(context.Context, string, string) (*media.Probe, error)) error {
+	if tp == nil {
+		return nil
+	}
+	intervals := []string{"0%+1", "50%+1", "90%+1"}
+	probes := make([]*media.Probe, 0, len(intervals))
+	for _, iv := range intervals {
+		p, err := probeAt(ctx, path, iv)
+		if err != nil {
+			return err
+		}
+		probes = append(probes, p)
+	}
+	for _, t := range tp.Tracks {
+		var key string
+		for i, p := range probes {
+			var s *media.Stream
+			for j := range p.Streams {
+				if p.Streams[j].Index == t.Index {
+					s = &p.Streams[j]
+					break
+				}
+			}
+			if s == nil {
+				return siphonerr.New(siphonerr.InplaceInfeasible,
+					"stream %d is missing at the %s probe; relocate needs a constant track config (use --mode safe)",
+					t.Index, intervals[i])
+			}
+			k := s.ConfigKey()
+			if i == 0 {
+				key = k
+				continue
+			}
+			if k != key {
+				return siphonerr.New(siphonerr.InplaceInfeasible,
+					"stream %d changes configuration between %s and %s; relocate needs a constant track config (use --mode safe)",
+					t.Index, intervals[0], intervals[i])
+			}
+		}
+	}
+	return nil
 }
 
 func refuse(err error) error {
@@ -444,7 +534,7 @@ func sumStreamBits(p *media.Probe) int64 {
 }
 
 func reserveSize(sourceSize int64) int64 {
-	out := sourceSize*108/100 + 16*mib
+	out := (sourceSize*105+99)/100 + 16*mib
 	if out < sourceSize {
 		out = sourceSize
 	}

@@ -1,12 +1,12 @@
-// Package stitch is the video stitch spike (spec §8, phase 4): it takes an
-// MKV, plans keyframe-aligned segments from Cues (with an ffprobe scan
-// fallback), extracts them tail-first from a cached EBML header plus one byte
-// range each, assembles a fragmented MP4 into a sparse temp written backwards,
-// and reports packet counts, tfdt monotonicity, and one-pass I/O accounting.
+// Package stitch is the video stitching core proved by the phase-4 spike
+// (spec §8): it plans keyframe-aligned segments from Cues (with an ffprobe
+// scan fallback), extracts them tail-first from a cached EBML header plus one
+// byte range each, assembles a fragmented MP4 into a sparse temp written
+// backwards, and verifies packet counts, tfdt monotonicity, and one-pass I/O.
 //
-// It is a lab: not wired into the CLI, no journal, no recovery. This
-// directory's RESULTS.md records what the spike proved; the RelocateEngine
-// builds on these primitives.
+// The standalone Run harness and RESULTS.md record what the spike proved; the
+// RelocateEngine uses the Session API for the journaled, resumable production
+// path.
 package stitch
 
 import (

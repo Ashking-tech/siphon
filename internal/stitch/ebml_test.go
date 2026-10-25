@@ -176,6 +176,7 @@ func TestSegmentsFromPicks(t *testing.T) {
 	want := []Segment{
 		{
 			Index: 0, SrcOff: 100, SrcEnd: 320, AnchorFrom: 108, FirstPTSNS: 0,
+			TailFrom: 308, TailTo: 320,
 			Pieces: []Piece{
 				{Ranges: [][2]int64{{108, 180}}, Wrap: true},
 				{Ranges: [][2]int64{{180, 300}}},
@@ -184,6 +185,7 @@ func TestSegmentsFromPicks(t *testing.T) {
 		},
 		{
 			Index: 1, SrcOff: 300, SrcEnd: 420, AnchorFrom: 320, FirstPTSNS: int64(8 * time.Second),
+			TailFrom: 408, TailTo: 420,
 			Pieces: []Piece{
 				{Ranges: [][2]int64{{308, 312}, {320, 380}}, Wrap: true},
 				{Ranges: [][2]int64{{380, 400}}},

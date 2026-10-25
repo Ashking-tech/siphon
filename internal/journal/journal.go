@@ -45,8 +45,11 @@ type Params struct {
 	SegmentToleranceNS int64  `json:"segment_tolerance_ns"`
 	PlanSource         string `json:"plan_source,omitempty"`
 	Verify             string `json:"verify,omitempty"`
+	VerifyFrames       int    `json:"verify_frames,omitempty"`
 	DropIncompatible   bool   `json:"drop_incompatible,omitempty"`
 	TranscodeAudio     bool   `json:"transcode_audio,omitempty"`
+	AllowNonstandard   bool   `json:"allow_nonstandard,omitempty"`
+	DropMetadata       bool   `json:"drop_metadata,omitempty"`
 
 	// Audio reclaim: 0 bitrate means LAME VBR -V 2; otherwise CBR kbps.
 	// The WAV shape is journaled because reclaim destroys the source's own
@@ -78,48 +81,98 @@ type Job struct {
 	Params      Params            `json:"params"`
 	Tools       map[string]string `json:"tools,omitempty"`
 	ReserveSize int64             `json:"reserve_size,omitempty"`
+	TempPath    string            `json:"temp_path,omitempty"`
+	// TempDev/TempIno identify the inode the engine created as its output
+	// temp. rename(2) keeps the inode, so a finalising journal can prove that
+	// a target at the destination is its own output and not a pre-existing
+	// file that happens to have the reserve size.
+	TempDev uint64 `json:"temp_dev,omitempty"`
+	TempIno uint64 `json:"temp_ino,omitempty"`
+}
+
+// Anchor is one MP4 track's source first-block PTS (ns), used by relocate's
+// final timestamp patch pass after a resume.
+type Anchor struct {
+	Track uint32 `json:"track"`
+	NS    int64  `json:"ns"`
 }
 
 // Segment is one independently recoverable unit.
 type Segment struct {
-	I       int    `json:"i"`
-	SrcOff  int64  `json:"src_off"`
-	SrcEnd  int64  `json:"src_end"`
-	OutOff  *int64 `json:"out_off"`
-	OutLen  *int64 `json:"out_len"`
-	Packets int64  `json:"packets,omitempty"`
-	State   string `json:"state"`
+	I          int      `json:"i"`
+	SrcOff     int64    `json:"src_off"`
+	SrcEnd     int64    `json:"src_end"`
+	FirstPTSNS int64    `json:"first_pts_ns,omitempty"`
+	OutOff     *int64   `json:"out_off"`
+	OutLen     *int64   `json:"out_len"`
+	Packets    int64    `json:"packets,omitempty"`
+	Moofs      int      `json:"moofs,omitempty"`
+	Anchors    []Anchor `json:"anchors,omitempty"`
+	// TailFrom/TailTo/TailPrefix cache the next cluster's prefix before its
+	// segment truncation removes it from the source.
+	TailFrom   int64  `json:"tail_from,omitempty"`
+	TailTo     int64  `json:"tail_to,omitempty"`
+	TailPrefix []byte `json:"tail_prefix,omitempty"`
+	State      string `json:"state"`
 }
 
 // Cursors are the durable positions of a destructive engine. Relocate uses
-// the tail/out pair; audio reclaim uses the read/write pair.
+// the tail/out pair; audio reclaim uses the read/write pair. Truncating marks
+// the crash window between the durable fragment checkpoint and the source
+// ftruncate: the source may be at either TailCursor or the truncating
+// segment's SrcEnd.
 type Cursors struct {
 	TailCursor    int64 `json:"tail_cursor,omitempty"`
 	OutCursor     int64 `json:"out_cursor,omitempty"`
 	ReadCursor    int64 `json:"read_cursor,omitempty"`
 	WriteCursor   int64 `json:"write_cursor,omitempty"`
 	SourceMtimeNS int64 `json:"source_mtime_ns"`
+	// TruncateFrom is the source size before the pending ftruncate. The
+	// pre-truncate window is not seg.SrcEnd: the source already ended at the
+	// next segment's SrcOff, which can be below this segment's SrcEnd.
+	TruncateFrom int64 `json:"truncate_from,omitempty"`
+	Truncating   bool  `json:"truncating,omitempty"`
 }
 
-// Init describes the MP4 initialisation segment, if any.
+// Init describes the MP4 initialisation segment, if any. Relocate stores the
+// bytes in the journal so a crash after the last source truncation can still
+// assemble and verify the output.
 type Init struct {
 	OutOff int64  `json:"out_off"`
 	Len    int64  `json:"len"`
 	SHA256 string `json:"sha256"`
+	Data   []byte `json:"data,omitempty"`
 }
 
 // Journal is the on-disk document.
 type Journal struct {
-	Schema    int       `json:"schema"`
-	Seq       uint64    `json:"seq"`
-	CRC32C    string    `json:"crc32c"`
-	Job       Job       `json:"job"`
-	Segments  []Segment `json:"segments,omitempty"`
-	Cursors   Cursors   `json:"cursors"`
-	Init      *Init     `json:"init,omitempty"`
-	Phase     string    `json:"phase"`
-	CreatedNS int64     `json:"created_ns"`
-	UpdatedNS int64     `json:"updated_ns"`
+	Schema   int       `json:"schema"`
+	Seq      uint64    `json:"seq"`
+	CRC32C   string    `json:"crc32c"`
+	Job      Job       `json:"job"`
+	Segments []Segment `json:"segments,omitempty"`
+	Cursors  Cursors   `json:"cursors"`
+	Init     *Init     `json:"init,omitempty"`
+	// ExpectedCounts is the per-stream packet count captured before the first
+	// truncation (exact) or the planner's estimate after a crash that lost the
+	// tail. CountsExact says which.
+	ExpectedCounts map[string]int `json:"expected_counts,omitempty"`
+	CountsExact    bool           `json:"counts_exact,omitempty"`
+	// SourceStarts is the first packet PTS per codec type, captured before the
+	// first truncation. The full gate compares the output against it after the
+	// source's media has been consumed.
+	SourceStarts map[string]float64 `json:"source_starts,omitempty"`
+	// SourceDurationNS is the source container duration captured before the
+	// first truncation, so the full gate can compare the assembled duration
+	// after the source's own tail is gone.
+	SourceDurationNS int64 `json:"source_duration_ns,omitempty"`
+	// PadNS is the global timeline pad applied by the relocate patch pass.
+	// It lets a resume after assembly skip the (non-idempotent on disk) init
+	// write while still running the same full gate.
+	PadNS     int64  `json:"pad_ns,omitempty"`
+	Phase     string `json:"phase"`
+	CreatedNS int64  `json:"created_ns"`
+	UpdatedNS int64  `json:"updated_ns"`
 }
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
@@ -372,6 +425,22 @@ func (j *Journal) verifyCRC() error {
 	return nil
 }
 
+// OutputMatches reports whether path is the inode the journal created as its
+// output temp, at the reserved size. A successful rename keeps the inode, so
+// this is how recovery proves a finalising target is its own output rather
+// than a pre-existing file of the same size.
+func OutputMatches(j *Journal, path string) bool {
+	if j == nil || j.Job.TempDev == 0 || j.Job.TempIno == 0 {
+		return false
+	}
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		return false
+	}
+	return uint64(st.Dev) == j.Job.TempDev && st.Ino == j.Job.TempIno &&
+		st.Size == j.Job.ReserveSize
+}
+
 // VerifySource checks the fields that must match for this mode, per spec
 // §4.6.3. Destructive modes compare against their durable cursors.
 func VerifySource(j *Journal, path string) error {
@@ -385,6 +454,44 @@ func VerifySource(j *Journal, path string) error {
 
 	switch j.Job.Mode {
 	case "relocate":
+		if j.Cursors.Truncating {
+			var seg *Segment
+			for i := range j.Segments {
+				if j.Segments[i].State == "truncating" {
+					seg = &j.Segments[i]
+					break
+				}
+			}
+			if seg == nil {
+				return siphonerr.New(siphonerr.StaleJournal,
+					"journal is marked truncating but has no truncating segment")
+			}
+			switch st.Size {
+			case j.Cursors.TailCursor:
+				// Our ftruncate completed but its checkpoint did not. The
+				// mtime moved because of our own write, so it is not evidence
+				// of an external change; recover reconciles it.
+			default:
+				pre := j.Cursors.TruncateFrom
+				if pre <= 0 {
+					// Journals written before TruncateFrom existed only got
+					// this window right for the last segment.
+					pre = seg.SrcEnd
+				}
+				if st.Size != pre {
+					return siphonerr.New(siphonerr.SourceChanged,
+						"source size %d is neither tail cursor %d nor the pending truncate start %d",
+						st.Size, j.Cursors.TailCursor, pre)
+				}
+				// The checkpoint landed but the ftruncate did not. The source
+				// must still be exactly what the checkpoint recorded.
+				if j.Cursors.SourceMtimeNS != 0 && st.Mtim.Nano() != j.Cursors.SourceMtimeNS {
+					return siphonerr.New(siphonerr.SourceChanged,
+						"source mtime changed before the pending truncate")
+				}
+			}
+			return nil
+		}
 		if st.Size != j.Cursors.TailCursor {
 			return siphonerr.New(siphonerr.SourceChanged,
 				"source size %d does not match tail cursor %d", st.Size, j.Cursors.TailCursor)

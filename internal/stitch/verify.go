@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -174,6 +175,141 @@ func streamStartTimes(ctx context.Context, path string) (map[string]float64, err
 	return starts, nil
 }
 
+// matroskaCodecName maps the CodecID stored in trackInfo to ffprobe's
+// codec_name, which is what the output probe reports.
+func matroskaCodecName(id string) string {
+	switch {
+	case strings.HasPrefix(id, "V_MPEG4/ISO/AVC"):
+		return "h264"
+	case strings.HasPrefix(id, "V_MPEGH/ISO/HEVC"):
+		return "hevc"
+	case strings.HasPrefix(id, "V_AV1"):
+		return "av1"
+	case strings.HasPrefix(id, "V_MPEG4/ISO/ASP"):
+		return "mpeg4"
+	case strings.HasPrefix(id, "V_VP8"):
+		return "vp8"
+	case strings.HasPrefix(id, "V_VP9"):
+		return "vp9"
+	case strings.HasPrefix(id, "A_AAC"):
+		return "aac"
+	case strings.HasPrefix(id, "A_ALAC"):
+		return "alac"
+	case strings.HasPrefix(id, "A_AC3"):
+		return "ac3"
+	case strings.HasPrefix(id, "A_EAC3"):
+		return "eac3"
+	case strings.HasPrefix(id, "A_FLAC"):
+		return "flac"
+	case strings.HasPrefix(id, "A_OPUS"):
+		return "opus"
+	case strings.HasPrefix(id, "A_DTS"):
+		return "dts"
+	case strings.HasPrefix(id, "A_TRUEHD"):
+		return "truehd"
+	default:
+		return strings.ToLower(id)
+	}
+}
+
+// outputStreams returns the output's video/audio stream types and codecs in
+// container order. The full gate compares this against the retained plan.
+func outputStreams(ctx context.Context, path string) ([]struct{ Typ, Codec string }, error) {
+	var raw struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			CodecName string `json:"codec_name"`
+		} `json:"streams"`
+	}
+	cmd := makeFFprobe(ctx, "-v", "error",
+		"-show_entries", "stream=codec_type,codec_name",
+		"-of", "json", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe streams %s: %w", path, err)
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("ffprobe streams %s: %w", path, err)
+	}
+	var streams []struct{ Typ, Codec string }
+	for _, s := range raw.Streams {
+		if s.CodecType == "video" || s.CodecType == "audio" {
+			streams = append(streams, struct{ Typ, Codec string }{s.CodecType, strings.ToLower(s.CodecName)})
+		}
+	}
+	return streams, nil
+}
+
+// SourceDuration reads the retained A/V duration before relocation truncates
+// the source. Per-stream durations are used because a delayed audio track can
+// legitimately extend past Matroska's Info duration; the engine journals the
+// value for the full gate.
+func SourceDuration(ctx context.Context, path string) (int64, error) {
+	d, err := maxAVDuration(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	return int64(d * 1e9), nil
+}
+
+// maxAVDuration returns the longest video/audio stream duration, falling back
+// to the container duration when streams carry none. It deliberately ignores
+// subtitle durations: relocation drops subtitles.
+func maxAVDuration(ctx context.Context, path string) (float64, error) {
+	var raw struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			Duration  string `json:"duration"`
+		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	cmd := makeFFprobe(ctx, "-v", "error",
+		"-show_entries", "stream=codec_type,duration:format=duration",
+		"-of", "json", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe duration %s: %w", path, err)
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return 0, fmt.Errorf("ffprobe duration %s: %w", path, err)
+	}
+	max := 0.0
+	for _, s := range raw.Streams {
+		if s.CodecType != "video" && s.CodecType != "audio" {
+			continue
+		}
+		v, err := strconv.ParseFloat(s.Duration, 64)
+		if err == nil && v > max {
+			max = v
+		}
+	}
+	if max == 0 {
+		if v, err := strconv.ParseFloat(raw.Format.Duration, 64); err == nil {
+			max = v
+		}
+	}
+	if max == 0 {
+		return 0, fmt.Errorf("ffprobe duration %s: no video/audio duration", path)
+	}
+	return max, nil
+}
+
+// videoFrameNS returns the selected video track's Matroska DefaultDuration,
+// used for the full gate's "two frames" duration tolerance.
+func videoFrameNS(p *Plan) int64 {
+	if p == nil {
+		return 0
+	}
+	for _, t := range p.Tracks {
+		if t.number == p.VideoTrack {
+			return t.defaultDurationNS
+		}
+	}
+	return 0
+}
+
 // fullDecode decodes the whole file with -xerror.
 func fullDecode(ctx context.Context, path string) error {
 	cmd := makeFFmpeg(ctx, "-nostdin", "-v", "error", "-xerror",
@@ -208,6 +344,86 @@ func verifyAssembly(ctx context.Context, plan *Plan, rep *Report, opt Options) [
 	}
 	add("box chain", len(moofs) == expectedMoofs && (firstBox == "free" || firstBox == "ftyp"),
 		"first box %s, %d moofs (expected %d), %d bytes", firstBox, len(moofs), expectedMoofs, size)
+
+	// Full-gate identity: the output must retain exactly the plan's video/audio
+	// tracks and codecs. A resume with every segment done has no source track
+	// table left; packet counts and decode still cover that case.
+	if len(plan.Tracks) > 0 {
+		// Extraction maps video first, then audio, regardless of the order
+		// of the source's Matroska tracks. Build the expected list in that
+		// output order.
+		want := make([]struct{ Typ, Codec string }, 0, len(plan.TrackMap))
+		for _, t := range plan.Tracks {
+			if t.number != plan.VideoTrack {
+				continue
+			}
+			if _, ok := plan.TrackMap[t.number]; ok {
+				want = append(want, struct{ Typ, Codec string }{"video", matroskaCodecName(t.codec)})
+			}
+		}
+		for _, t := range plan.Tracks {
+			if t.number != plan.AudioTrack {
+				continue
+			}
+			if _, ok := plan.TrackMap[t.number]; ok {
+				want = append(want, struct{ Typ, Codec string }{"audio", matroskaCodecName(t.codec)})
+			}
+		}
+		got, err := outputStreams(ctx, rep.OutPath)
+		if err != nil {
+			add("stream identity", false, "%v", err)
+		} else {
+			ok := len(got) == len(want)
+			var b strings.Builder
+			for i := range want {
+				if i >= len(got) {
+					fmt.Fprintf(&b, "missing %s/%s; ", want[i].Typ, want[i].Codec)
+					continue
+				}
+				fmt.Fprintf(&b, "%s/%s vs %s/%s; ", got[i].Typ, got[i].Codec, want[i].Typ, want[i].Codec)
+				if got[i].Typ != want[i].Typ || got[i].Codec != want[i].Codec {
+					ok = false
+				}
+			}
+			for i := len(want); i < len(got); i++ {
+				fmt.Fprintf(&b, "extra %s/%s; ", got[i].Typ, got[i].Codec)
+			}
+			add("stream identity", ok, "%s", strings.TrimSpace(b.String()))
+		}
+	}
+
+	// Full-gate duration and sanity. Prefer the journaled source container
+	// duration; the lab still has its source, so it can probe it live.
+	srcDurNS := plan.SourceDurationNS
+	if srcDurNS == 0 && plan.Path != "" {
+		if d, derr := maxAVDuration(ctx, plan.Path); derr == nil && d > 0 {
+			srcDurNS = int64(d * 1e9)
+		}
+	}
+	if srcDurNS == 0 {
+		srcDurNS = plan.DurationNS
+	}
+	if srcDurNS > 0 {
+		dur, err := maxAVDuration(ctx, rep.OutPath)
+		if err != nil {
+			add("duration", false, "%v", err)
+		} else {
+			src := float64(srcDurNS) / 1e9
+			tol := src / 100
+			frameTol := 2.0 / 30.0
+			if ns := videoFrameNS(plan); ns > 0 {
+				frameTol = 2 * float64(ns) / 1e9
+			}
+			if tol < frameTol {
+				tol = frameTol
+			}
+			add("duration", math.Abs(dur-src) <= tol,
+				"output %.6fs, source %.6fs (Δ %.6fs, tolerance %.6fs)", dur, src, math.Abs(dur-src), tol)
+		}
+		min := int64(math.Ceil(float64(srcDurNS) / 1e9 * 1024))
+		add("size sanity", size >= min, "output %d B, minimum %d B for %.3fs",
+			size, min, float64(srcDurNS)/1e9)
+	}
 
 	seqOK := len(moofs) > 0
 	seqDetail := fmt.Sprintf("%d fragments", len(moofs))
@@ -274,7 +490,11 @@ func verifyAssembly(ctx context.Context, plan *Plan, rep *Report, opt Options) [
 	}
 	add("cts non-negative", ctsOK, "%s", ctsDetail)
 
-	srcCounts, err1 := streamPacketCounts(ctx, plan.Path)
+	srcCounts := rep.SourceCounts
+	var err1 error
+	if srcCounts == nil {
+		srcCounts, err1 = streamPacketCounts(ctx, plan.Path)
+	}
 	outCounts, err2 := streamPacketCounts(ctx, rep.OutPath)
 	if err1 == nil && err2 == nil {
 		keys := map[string]bool{}
@@ -293,20 +513,35 @@ func verifyAssembly(ctx context.Context, plan *Plan, rep *Report, opt Options) [
 		var b strings.Builder
 		for _, k := range sorted {
 			fmt.Fprintf(&b, "%s %d/%d  ", k, outCounts[k], srcCounts[k])
-			if srcCounts[k] != outCounts[k] {
+			tol := 0
+			if rep.TolerantCounts {
+				tol = srcCounts[k] / 100
+				if tol < 2 {
+					tol = 2
+				}
+			}
+			if d := outCounts[k] - srcCounts[k]; d > tol || d < -tol {
 				ok = false
 			}
 		}
-		add("packet counts", ok, "output/source: %s", strings.TrimSpace(b.String()))
+		label := "output/source"
+		if rep.TolerantCounts {
+			label = "output/estimate (±1%)"
+		}
+		add("packet counts", ok, "%s: %s", label, strings.TrimSpace(b.String()))
 	} else {
 		add("packet counts", false, "ffprobe failed: %v %v", err1, err2)
 	}
 
 	// Timeline: the assembled file may carry one global pad, but every stream's
 	// offset relative to the video must match the source.
-	srcStarts, err1 := streamStartTimes(ctx, plan.Path)
-	outStarts, err2 := streamStartTimes(ctx, rep.OutPath)
-	if err1 == nil && err2 == nil {
+	srcStarts := rep.SourceStarts
+	var startErr error
+	if srcStarts == nil {
+		srcStarts, startErr = streamStartTimes(ctx, plan.Path)
+	}
+	outStarts, outStartErr := streamStartTimes(ctx, rep.OutPath)
+	if startErr == nil && outStartErr == nil {
 		pad := float64(rep.PadNS) / 1e9
 		sv, okSrc := srcStarts["video"]
 		ov, okOut := outStarts["video"]
@@ -340,7 +575,7 @@ func verifyAssembly(ctx context.Context, plan *Plan, rep *Report, opt Options) [
 			}
 		}
 	} else {
-		add("start anchor", false, "ffprobe failed: %v %v", err1, err2)
+		add("start anchor", false, "ffprobe failed: %v %v", startErr, outStartErr)
 	}
 
 	// One-pass read: each payload byte the pieces copy was read exactly once

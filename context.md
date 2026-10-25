@@ -4,7 +4,7 @@
 > command lands, then commit. It is the resume point after context loss.
 > Read `spec.md` (v1.7) for the full contract; this file records **what exists**.
 
-**Last updated:** 2026-10-24
+**Last updated:** 2026-10-25
 **Repo:** `/home/ashking/Projects/siphon` (local git, branch `main`)
 **Go module:** `siphon` (provisional; rename before publishing)
 
@@ -35,26 +35,29 @@ Supported pairs: WAV→MP3, MKV→MP4, PNG/JPEG/WebP matrix. See `spec.md` §3.1
 | Journal (CRC, atomic save, lock) | implemented + tested |
 | Platform layer (temp, rename, fsync, xattr, sparse probe, magic, temp reap) | implemented + tested |
 | Progress sinks | implemented (noop, terminal, plain, JSON) |
-| Preflight gate | checks 1–7, 14–18, 20 + WAV gate + space + image probe |
-| CLI skeleton | `convert`, `inspect`, `recover` (driver wired), `doctor`, `version` |
+| Preflight gate | ordered checks incl. WAV/image/MKV, MKV track policy, relocate 3-point config + 3-segment gate + space; stitch plan |
+| CLI | `convert`, `inspect`, `recover`, `doctor`, `version` |
 | Imaging layer (decode, orientation, ICC/EXIF/XMP, WebP, verify) | implemented + tested |
-| Video stitch spike (`internal/lab/stitch`) | implemented + tested: Cues/scan plan, synthetic cluster boundaries, sparse reverse assembly, fault suite (`RESULTS.md`) |
-| Engines | AtomicCopy (images), Sliding (WAV→MP3 safe + reclaim) implemented + tested; Relocate / Remux not yet |
+| Video stitch core (`internal/stitch`) | production planner/extractor/assembler/verifier; standalone `cmd/stitch` harness + `RESULTS.md` + fault suite |
+| Engines | AtomicCopy (images), Sliding (WAV→MP3 safe + reclaim), Remux (MKV→MP4 safe), Relocate (MKV→MP4 fragmented, journaled) — all implemented + tested |
 | WAV parser (`internal/wav`) | implemented + tested (PCM + extensible, INFO/bext detection, header synth) |
-| Recovery driver (`internal/recover`) | implemented + tested (sliding splice-resume) |
+| Recovery driver (`internal/recover`) | sliding splice-resume, relocate exact resume, completed-rename cleanup; tested |
 | GUI | not yet (KDE wrapper planned; GUI toolkit decision pending) |
 
-`go build ./...` and `go test ./...` pass. `siphon doctor` and `siphon inspect`
-work. `siphon convert` converts the image pairs and WAV→MP3 (safe and reclaim)
-end to end. A killed reclaim job is finished by `siphon recover <file>`
-(splice-resume, ~26 ms seam), including crashes after truncate or rename.
-`siphon recover` on a video/relocate journal still exits 4.
+`go build ./...`, `go vet ./...`, and `go test ./...` pass; `make build` keeps
+`CGO_ENABLED=0`. `siphon doctor` and `siphon inspect` work. `siphon convert`
+converts image pairs, WAV→MP3 (safe/reclaim), and MKV→MP4 (`safe` remux or the
+default `relocate`). A killed reclaim or relocate job is finished by
+`siphon recover <file>`; relocate resume is exact (no seam) and handles a
+crash before/after each truncate and after the output rename.
 
-The phase-4 video stitch spike passes on the 12 s H.264/AAC fixture: 3 segments,
-360/360 video and 518/518 audio packets, every output packet at source+34 ms
-(video worst deviation 0.000 ms), one-pass extraction (634148/634880 B), and
-sampled + full decode clean. `internal/lab/stitch/RESULTS.md` records the
-design and the fault-sensitivity matrix. It is a lab, not wired into the CLI.
+The production stitch path passes on the 12 s H.264/AAC fixture: 4 segments,
+360/360 video and 518/518 audio packets, output duration 12.038299 s, exact
+one-pass extraction, full gate checks (stream identity, duration, size,
+counts, anchors, sync, one-pass) and full decode clean. Manual crash tests at
+segment-3-done and after the finish checkpoint both recovered to a clean
+360/518-packet output. `internal/stitch/RESULTS.md` records the design and
+fault-sensitivity matrix; `internal/engine/relocate/` is the production driver.
 
 ---
 
@@ -89,6 +92,16 @@ design and the fault-sensitivity matrix. It is a lab, not wired into the CLI.
 | Video boundaries | synthetic cluster split: every extraction starts at a keyframe; the previous segment carries the next cluster's leading B-frame/audio prefix | plain copy drops leading non-keyframes; `-copyinkf` gives them 1-tick durations and shifts the boundary 33 ms |
 | Video timestamps | re-anchor each segment/track; normalize cts to non-negative | the fragmented muxer rebases per run; the mov demuxer's `dts_shift` depends on parse order |
 | Video anchors | block PTS − CodecDelay | Matroska block timecodes are pre-delay (AAC priming 23 ms in the fixture) |
+| Relocate plan | Cues first when they cover ≥90 % of Duration; otherwise `ffprobe -show_packets`; a Cues read/parse error also falls back | spec §4.5.4.1; `plan_source` is journaled and shown by `inspect` |
+| Relocate boundaries | target every `--segment-duration`, snapped to a keyframe on the single retained video track within `--segment-tolerance`; ≥3 segments or `E_INPLACE_INFEASIBLE` | one video + one optional audio only; multi-stream and A/V drops are refused |
+| Relocate gate | remux-only, estimated output ≤1.03× source, 3-point constant track config, reserve = source×1.05 + 16 MiB | spec §4.5.4.2, §7.1; `--transcode-audio` is `E_INPLACE_INFEASIBLE` |
+| Relocate tail cache | before truncating segment i, cache `[TCOff,TCEnd)` + `[KeyPos, …)` for segment i−1 in the journal (`TailFrom`/`TailTo`/`TailPrefix`) | the next cluster's leading B-frames/audio prefix are needed by the previous segment and would otherwise be destroyed |
+| Relocate truncate protocol | body → `fdatasync(temp)` → checkpoint `truncating` + `TruncateFrom` + `TailCursor=src_off` → `ftruncate(source)` → `fdatasync` → checkpoint done + mtime | `TruncateFrom` distinguishes the pre-/post-truncate crash windows; `reconcileTruncate` completes either |
+| Relocate resume | done suffix is the trailing run of `done`; re-plan `[0,tail_cursor)` with `EndNS` = suffix's first keyframe; reattach the old tail prefix to the new last pending segment | exact continuation, no re-encode/seam; all-done resumes reuse the durable init/anchors |
+| Relocate finalise | verify → checkpoint `finalising` → `CopyMetadata` → fsync → rename → truncate/unlink source → journal remove | post-rename errors have `Untouched(false)` and no recover hint |
+| Relocate output identity | journal `TempDev`/`TempIno`; recovery accepts a finalising target only if its inode and reserve size match | size alone could mistake a pre-existing target for our output and delete the source |
+| Relocate source duration | journal the max retained A/V stream duration before truncation | a delayed audio track can extend past Matroska Info duration; the full gate compares against the real source timeline |
+| Relocate codec policy | only copyable single video + optional audio; `--drop-incompatible` may drop subtitles/metadata, never A/V | extraction uses a fixed `-map 0:v -map 0:a?`, so a dropped A/V would still be muxed; use `--mode safe` |
 | GUI architecture | engine remains UI-agnostic; GUI consumes `--json` + progress events | decision still open on toolkit; KDE wrapper first |
 | KDE progress | `kdialog --progressbar` via `qdbus6`, fallback `--passivepopup` | `qdbus6` missing on this host, fallback matters |
 
@@ -111,8 +124,10 @@ internal/imaging/               image decode/encode, orientation, ICC/EXIF/XMP, 
 internal/engine/                Engine interface + registry
 internal/engine/atomiccopy/     image engine: temp, alpha policy, verify, atomic rename (+ tests)
 internal/engine/sliding/        audio engine: lame safe/reclaim, invariant, MP3 frames, splice-resume (+ tests)
-internal/lab/stitch/            phase-4 video spike: EBML plan, synthetic segments, sparse assembly, verify, fault suite (+ RESULTS.md)
-internal/recover/               recovery driver: journal discovery, inode probe, engine dispatch (+ tests)
+internal/engine/remux/          MKV→MP4 safe remux: track map, ffmpeg, metadata, verify (+ tests)
+internal/engine/relocate/       MKV→MP4 fragmented relocate: journal, tail-first segments, resume, finalise (+ tests)
+internal/stitch/                production planner/extractor/assembler/verifier; `cmd/stitch` lab harness (+ RESULTS.md, fault suite)
+internal/recover/               recovery driver: journal discovery, inode probe, empty/finalising cleanup, engine dispatch (+ tests)
 internal/engines/               composition root: registers concrete engines
 internal/convert/               orchestrator: preflight → engine (+ tests)
 internal/cli/                   cobra commands, JSON/human output (+ tests)
@@ -142,7 +157,14 @@ Makefile, README.md, context.md
 - `Open(path, mode)` / `Find(dir, stem)`; `Store.Save(*Journal)` atomic
   (`tmp` → fsync → rename → dir fsync), increments `seq`, sets CRC.
 - `Store.Close`, `Store.Remove`.
-- Journal fields match spec §4.6.2; nullable `out_off`/`out_len`.
+- Journal fields match spec §4.6.2; nullable `out_off`/`out_len`. Relocate
+  additions: `Segment.FirstPTSNS`, `TailFrom`/`TailTo`/`TailPrefix`,
+  `Cursors.TruncateFrom`, `Init`, `PadNS`, `ExpectedCounts`, `CountsExact`,
+  `SourceStarts`, `SourceDurationNS`, `Job.TempDev`/`TempIno`.
+- `VerifySource(j, path)` checks dev/ino and the mode-specific size/mtime;
+  relocate accepts either side of a pending truncate (`TruncateFrom` pre,
+  `TailCursor` post). `OutputMatches(j, path)` proves a finalising target is
+  the inode the journal created (size + dev/ino), not merely the reserve size.
 - CRC is computed over `json.Marshal` of the journal with `crc32c` blanked.
 
 ### Platform (`internal/platform`)
@@ -180,29 +202,54 @@ first write remove the journal and report an untouched source; afterwards
 in the written prefix, backs off one PCM frame, encodes the remainder through
 a synthetic WAV header, and finishes with the same idempotent finalisation.
 
-### Video stitch spike (`internal/lab/stitch`)
+### Video stitch core (`internal/stitch`)
 `BuildPlan(ctx, path, Options, *IOStats) (*Plan, error)` parses the MKV
 header/Info/Tracks/Cues, picks one video + optional one audio track, derives
-keyframes from Cues (coverage ≥90 % of Duration) or an `ffprobe -show_packets`
-scan, snaps boundaries to the nearest keyframe within tolerance, and builds
-synthetic pieces. `Keyframe` carries the cluster/keyframe-block/Timecode/cluster-end
-offsets; `Segment.Pieces` are raw cluster ranges or wrapped Timecode+block
-ranges; `Plan.ExtractBytes` is the exact one-pass byte count. `Run(ctx, plan,
-outPath, Options) (*Report, error)` extracts tail-first (ffmpeg stream copy,
-cached header + pieces on stdin, no seeking), analyzes each fragment, strips the
-init, writes bodies backwards into a sparse `reserve = source×1.05 + 16 MiB`,
-writes a leading `free` box, re-anchors every traf's tfdt and normalizes cts,
-fsyncs/renames, and verifies. `Report.Checks` covers box chain, mfhd order, tfdt
-monotonicity, cts non-negativity, packet counts, start anchor, A/V sync,
-one-pass I/O, sampled decode, and optional full decode. `cmd/stitch` is the lab
-harness; `RESULTS.md` records the findings and fault matrix.
+keyframes from Cues (coverage ≥90 % of Duration; parse/read errors fall back)
+or an `ffprobe -show_packets` scan, snaps boundaries to the nearest keyframe
+within tolerance, and builds synthetic pieces. `Options.EndNS` bounds a resume
+re-plan; `Options.ForceScan` is used by the lab harness. `Segment.Pieces` are
+raw cluster ranges or wrapped Timecode+block ranges; `Plan.ExtractBytes` is the
+exact one-pass byte count; `Plan.SourceDurationNS` carries the pre-truncation
+source duration for the full gate.
+
+`Session` owns one journaled run: `Prepare(i, frames)` extracts through
+ffmpeg's stdin (cached header + pieces, no seeking), checks the source first
+video block against `FirstPTSNS`, analyzes the fragment, strips the init, and
+runs the sampled decode. `CacheTail(i)` caches the next cluster's prefix for
+the previous segment; `Place(tmp, body)` writes backwards; `Finish` writes the
+init and leading `free` box, patches every traf's tfdt/cts; `Verify` runs the
+full gate. `Report` supports source count/start overrides and tolerant counts
+for recovery. `Run(ctx, plan, outPath, Options)` remains the standalone lab
+harness. `Report.Checks` covers box chain, stream identity, duration, size,
+mfhd order, tfdt monotonicity, cts non-negativity, packet counts, start anchor,
+A/V sync, one-pass I/O, sampled decode, and optional full decode. `cmd/stitch`
+and `RESULTS.md` record the design and fault matrix.
+
+### Engines (`internal/engine/relocate`)
+`New()` registers `relocate` (MKV→fragmented MP4). `Convert` builds the plan,
+enforces ≥3 segments and the A/V track policy, snapshots/locks the source, runs
+the pre-flight stitch probe (unless `--skip-probe`), captures exact packet
+counts + source starts + source duration, creates the reserved temp and
+journal, then runs `runSegments` tail-first: `Prepare` → `CacheTail` → `Place`
+→ `fdatasync(temp)` → checkpoint `truncating` → `ftruncate(source)` →
+`fdatasync(source)` → checkpoint `done`. `finish` assembles, verifies, checks
+`finalising`, copies metadata, fsyncs, renames (noreplace/force), truncates and
+unlinks the source, then removes the journal. `Resume` reconciles a pending
+truncate, re-plans `[0,tail_cursor)` with `EndNS`, reattaches the cached tail,
+skips the done suffix, and uses the journal's init/anchors; a finalising journal
+whose temp is gone is accepted only when `journal.OutputMatches` proves the
+target inode. `checkRelocateTrackPlan` refuses A/V drops; the fixed extraction
+map cannot honor `--drop-incompatible` for video/audio. `internal/recover`
+dispatches to `Resume`.
 
 ### Recovery (`internal/recover`)
 `Run(ctx, source, sink) (*core.Result, journalPath, error)` — finds the
-journal next to the source, probes source-or-target for the inode, runs
-`journal.VerifySource` (mode/phase-aware), and dispatches to the owning
-engine. Sliding is wired; relocate/remux answer `E_RECOVERY_AVAILABLE` until
-their resume lands.
+journal next to the source, drops an empty create-only journal, handles a
+relocate finalising target after rename (inode proof), probes source-or-target
+for the inode, runs `journal.VerifySource` (mode/phase-aware), and dispatches
+to the owning engine. Sliding splice-resume and relocate exact resume are
+wired; remux safe has no resume (delete the temp and re-run).
 
 ### Imaging (`internal/imaging`)
 - `Probe(ctx, path, format) (*Info, error)` — full decode at pre-flight;
@@ -246,10 +293,19 @@ estimate (`source + max(2×source, decoded_raw×1.5) + 2 MiB`). WAV sources are
 parsed from their own header (`internal/wav`, no ffprobe): >2 channels is
 `E_FORMAT_UNSUPPORTED`, INFO/bext metadata is `E_METADATA_DROP` unless
 `--drop-metadata`, and reclaim applies the R ≤ 0.90 gate (`E_INPLACE_INFEASIBLE`
-otherwise). Estimates per spec §7.1: safe = source + duration × ceiling
-bitrate / 8 × 1.05 (+1 MiB); reclaim = source × 1.01 (+1 MiB); ceiling is the
-`--bitrate` value or 190 kbps. Codec, sparse, relocate gate, stitch probe,
-and confirmation gates are still TODO (documented in §7).
+otherwise). MKV sources are probed by ffprobe: the shared track policy
+(`internal/media/trackplan.go`) refuses incompatible codecs/subtitles and
+reports attachments/chapters/tags; `--drop-metadata` accepts the loss. For
+relocate, the gate also requires a single video + optional single audio,
+refuses dropping an A/V stream (the fixed extraction map cannot honor it),
+runs the 3-point head/mid/tail constant-config probe, builds the Cues/scan
+stitch plan (≥3 segments), and checks the 1.05×+16 MiB reserve. The expensive
+stitch probe itself runs in the engine before any truncation (check 19,
+skipped by `--skip-probe`). Estimates per spec §7.1: MKV safe = source×1.03 +
+streams×1.1/8 + 4 MiB; relocate = one segment + 16 MiB; WAV safe = source +
+duration × ceiling bitrate / 8 × 1.05 (+1 MiB); WAV reclaim = source × 1.01
+(+1 MiB); ceiling is `--bitrate` or 190 kbps. Confirmation is handled by the
+CLI for non-TTY reclaim.
 
 ### CLI
 ```text
@@ -260,7 +316,10 @@ siphon doctor
 siphon version
 ```
 Global: `--json`, `--allow-root`, `--allow-hardlinks`, `--timeout`.
-Convert/inspect flags include `--bg`, `--quality`, `--drop-metadata`.
+Convert/inspect flags include `--to`, `--mode`, `--bg`, `--quality`,
+`--bitrate`, `--drop-metadata`, `--drop-incompatible`, `--transcode-audio`,
+`--allow-nonstandard`, `--segment-duration`, `--segment-tolerance`, `--verify`,
+`--verify-frames`, `--probe-segments`, `--skip-probe`, `--force`, `--yes`.
 Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
 `progress.Plain` (or `progress.JSON` with `--json`); `--dry-run` aliases
 `inspect`. Exit codes per spec §5.2.
@@ -283,21 +342,29 @@ Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
 
 ## 7. Next steps (ordered)
 
-1. **RemuxEngine** (MKV→MP4 `safe`) — ffmpeg remux, track policy flags, verification.
-2. **RelocateEngine** — planner, per-segment protocol, sparse reserve, free-box assembly, pre-flight stitch probe, exact resume.
-3. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
-4. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
-5. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers.
+1. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
+2. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
+3. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers, and the open verification items below.
 
 Done: platform/journal (`7f43f93`), image engine `AtomicCopy` +
 `internal/imaging` (`b842dbf`), audio engine `Sliding` + `internal/wav` +
-`internal/recover` (`942d259`), phase-4 video stitch spike
-(`internal/lab/stitch`, `RESULTS.md`; this checkpoint's working tree,
-committed alongside). The spike gates `RelocateEngine`.
+`internal/recover` (`942d259`), phase-4 video stitch spike (`1087aec`),
+safe `RemuxEngine` (`13d0ed2`), and phase-5 `RelocateEngine` (committed with
+this checkpoint). `internal/stitch` is now the shared production core, not a
+lab-only package; `cmd/stitch` remains the harness.
+
 Phase 3 end-to-end checks on this host: safe/reclaim conversion; SIGKILL
 mid-reclaim → `siphon recover` (1800 s file decodes to 1800.07 s); SIGINT →
 exit 130, journal kept, recover finishes; crash windows before truncate,
 after truncate, and after rename covered by tests.
+
+Phase 5 end-to-end checks on this host: fresh 12 s MKV relocation (4 segments,
+360/518 packets, 12.038299 s, full decode clean); manual crash after segment 3
+done and after the finish checkpoint both recovered; `go test ./...` covers
+fresh E2E, metadata refusal/drop, interrupt+resume, truncate-window
+reconciliation, finalising target inode proof (empty/missing/nonzero source),
+empty-journal cleanup, and preflight relocate refusals (short, multi-stream,
+config change, dropped A/V).
 
 ---
 
@@ -344,11 +411,12 @@ after truncate, and after rename covered by tests.
   spec's never-silent rule. A future tag transplant can lift this.
 - WebP end-to-end paths are untested on this host (`libwebp-tools` missing);
   `cwebp` dropping metadata surfaces as `E_METADATA_DROP` per §4.2.
-- **Video spike scope**: MKV→MP4, one video + one audio track, sized clusters
-  only (Cues and scan both require them), one boundary per cluster. Only
-  H.264/AAC were exercised; the stream-copy design is codec-agnostic but other
-  codecs need fixtures. The spike keeps the reserve-sized leading `free` box;
-  phase 5 must decide whether to keep or compact it.
+- **Video scope**: MKV→MP4, one video + one optional audio track, sized
+  clusters only (Cues and scan both require them), one boundary per cluster.
+  Only H.264/AAC were exercised; the stream-copy design is codec-agnostic but
+  other codecs need fixtures. The output keeps the reserve-sized leading
+  `free` box (spec §4.5.4.3 step 11), so file size is reserve-sized rather
+  than tightly compacted.
 - **Synthetic cluster boundaries** are mandatory for clusters that start with
   the previous GOP's trailing B-frames. `-copyinkf` is not a fix: the muxer
   gives those frames 1-tick durations and shifts the boundary by one frame
@@ -358,3 +426,34 @@ after truncate, and after rename covered by tests.
 - **Sampled verification** decodes from each fragment's keyframe, so it cannot
   validate a cross-fragment reference chain; the full assembled decode is the
   authoritative check (and what the fault suite uses for `avcC`).
+- **Full gate duration**: measured as the longest retained video/audio stream
+  duration, not Matroska Info duration. A delayed audio track legitimately
+  extends past the video duration (the `TestDelayedAudioSync` fixture), and the
+  output container reports that longer timeline. The engine journals this value
+  before truncation.
+- **Full gate stream identity**: skipped only on an all-done resume, where the
+  source track table is gone; packet counts, anchors, timeline, and decode
+  still run. A normal/fresh or partially-pending resume has the header and
+  checks codecs/track count.
+- **`--skip-probe` and metadata**: the init-tag metadata gate is part of the
+  pre-flight stitch probe, so `--skip-probe` also skips it (documented as
+  unsafe). A post-assembly metadata refusal has no recovery override; the
+  pre-truncation check is what makes `--drop-metadata` meaningful.
+- **Relocate `--drop-incompatible`**: may drop subtitles/data/attachments but
+  never a video/audio stream. The fixed `-map 0:v -map 0:a?` extraction would
+  still mux it; preflight and the engine both refuse with `E_INPLACE_INFEASIBLE`
+  and point at `--mode safe`.
+- **Completed-rename proof**: a finalising target is accepted only if its
+  inode equals the journal's `TempDev`/`TempIno` and its size equals the
+  reserve. This closes the false-positive where an unrelated target of the
+  same size could cause the source to be deleted.
+- **Empty journal**: a crash between `journal.Create` and the first `Save`
+  leaves a create-only journal. `recover` drops it and reports the source
+  untouched; a temp from that window is left to the 1 h stale-temp reaper.
+- **Cues fallback**: a Cues read/parse error falls back to the packet scan, not
+  a hard failure; `plan_source` records the path actually used. `ForceScan` is
+  exposed only by the `cmd/stitch` lab harness, not the CLI.
+- **Per-segment gate**: `Prepare` checks the source first video block against
+  the planned keyframe (±1 frame) before truncation, plus box parsing,
+  sampled decode, and init strip. Full structural mdat/trun-sum and per-track
+  identity/coverage checks remain full-gate work (and are open hardening items).

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"siphon/internal/siphonerr"
@@ -31,6 +32,18 @@ type Stream struct {
 	Duration      string            `json:"duration"`
 	Extradata     string            `json:"extradata,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty"`
+}
+
+// ConfigKey is the decoder configuration that must stay constant for a
+// segmented stream copy. It deliberately includes extradata: a mid-file
+// SPS/PPS change is exactly the hazard the 3-point probe exists to catch.
+func (s Stream) ConfigKey() string {
+	return strings.Join([]string{
+		s.CodecName, s.Profile, strconv.Itoa(s.Level),
+		strconv.Itoa(s.Width), strconv.Itoa(s.Height),
+		s.SampleRate, strconv.Itoa(s.Channels), s.ChannelLayout,
+		s.TimeBase, s.Extradata,
+	}, "|")
 }
 
 // FormatInfo is the subset of ffprobe container data Siphon uses.

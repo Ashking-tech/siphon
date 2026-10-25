@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -19,6 +20,7 @@ import (
 	"siphon/internal/core"
 	"siphon/internal/formats"
 	"siphon/internal/journal"
+	"siphon/internal/media"
 	"siphon/internal/siphonerr"
 )
 
@@ -451,5 +453,156 @@ func TestRefuseWAVCorrupt(t *testing.T) {
 	_, err := Run(context.Background(), wavJob(t, src, formats.ModeSafe))
 	if !siphonerr.IsCode(err, siphonerr.SourceCorrupt) {
 		t.Fatalf("got %v, want E_SOURCE_CORRUPT", err)
+	}
+}
+
+// --- video (MKV → MP4 relocate) --------------------------------------------
+
+func makeRelocateMKV(t *testing.T, dir, name string, seconds float64, extra ...string) string {
+	t.Helper()
+	skipWithoutTool(t, "ffmpeg")
+	skipWithoutTool(t, "ffprobe")
+	path := filepath.Join(dir, name)
+	args := []string{
+		"-nostdin", "-v", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+		"-t", fmt.Sprintf("%.3f", seconds),
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "30",
+		"-c:a", "aac", "-shortest",
+	}
+	args = append(args, extra...)
+	args = append(args, path)
+	cmd := exec.Command("ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("ffmpeg fixture: %v\n%s", err, stderr.String())
+	}
+	return path
+}
+
+func relocateMKVJob(t *testing.T, srcPath string) *core.Job {
+	t.Helper()
+	pair, ok := formats.Lookup(formats.MKV, formats.MP4)
+	if !ok {
+		t.Fatal("pair mkv → mp4 missing")
+	}
+	return &core.Job{
+		SourcePath:       srcPath,
+		TargetPath:       TargetPath(srcPath, formats.MP4),
+		Source:           formats.MKV,
+		Target:           formats.MP4,
+		Pair:             pair,
+		Mode:             formats.ModeRelocate,
+		SegmentDuration:  2 * time.Second,
+		SegmentTolerance: 500 * time.Millisecond,
+		Verify:           "sampled",
+		VerifyFrames:     3,
+		ProbeSegments:    4,
+		Timeout:          time.Minute,
+		AllowRoot:        os.Geteuid() == 0,
+	}
+}
+
+func TestRefuseRelocateTooFewSegments(t *testing.T) {
+	dir := t.TempDir()
+	src := makeRelocateMKV(t, dir, "short.mkv", 3)
+	_, err := Run(context.Background(), relocateMKVJob(t, src))
+	if !siphonerr.IsCode(err, siphonerr.InplaceInfeasible) {
+		t.Fatalf("got %v, want E_INPLACE_INFEASIBLE", err)
+	}
+	if !strings.Contains(err.Error(), "at least 3") {
+		t.Fatalf("error does not explain the segment minimum: %v", err)
+	}
+}
+
+func makeMultiAudioMKV(t *testing.T, dir, name string, seconds float64) string {
+	t.Helper()
+	skipWithoutTool(t, "ffmpeg")
+	skipWithoutTool(t, "ffprobe")
+	path := filepath.Join(dir, name)
+	args := []string{
+		"-nostdin", "-v", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+		"-f", "lavfi", "-i", "sine=frequency=880:sample_rate=44100",
+		"-t", fmt.Sprintf("%.3f", seconds),
+		"-map", "0:v", "-map", "1:a", "-map", "2:a",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "30",
+		"-c:a", "aac", "-shortest", path,
+	}
+	cmd := exec.Command("ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("ffmpeg fixture: %v\n%s", err, stderr.String())
+	}
+	return path
+}
+
+func TestRefuseRelocateMultiStream(t *testing.T) {
+	dir := t.TempDir()
+	src := makeMultiAudioMKV(t, dir, "multi.mkv", 8)
+	_, err := Run(context.Background(), relocateMKVJob(t, src))
+	if !siphonerr.IsCode(err, siphonerr.InplaceInfeasible) {
+		t.Fatalf("got %v, want E_INPLACE_INFEASIBLE", err)
+	}
+	if !strings.Contains(err.Error(), "single-audio") {
+		t.Fatalf("error does not explain the single-stream limit: %v", err)
+	}
+}
+
+func TestRelocateConfigProbeRefusesChange(t *testing.T) {
+	tp := &media.TrackPlan{Tracks: []media.Track{{Index: 0, Type: "video", Codec: "h264"}}}
+	base := func(w int) *media.Probe {
+		return &media.Probe{Streams: []media.Stream{{
+			Index: 0, CodecType: "video", CodecName: "h264",
+			Width: w, Height: 240, Profile: "High", Level: 31,
+		}}}
+	}
+	probe := func(ctx context.Context, path, iv string) (*media.Probe, error) {
+		if iv == "0%+1" {
+			return base(320), nil
+		}
+		return base(640), nil
+	}
+	err := checkRelocateConfigWith(context.Background(), "ignored", tp, probe)
+	if !siphonerr.IsCode(err, siphonerr.InplaceInfeasible) {
+		t.Fatalf("got %v, want E_INPLACE_INFEASIBLE", err)
+	}
+
+	// A stream missing from a later probe is also a config change.
+	probeMissing := func(ctx context.Context, path, iv string) (*media.Probe, error) {
+		if iv == "0%+1" {
+			return base(320), nil
+		}
+		return &media.Probe{}, nil
+	}
+	err = checkRelocateConfigWith(context.Background(), "ignored", tp, probeMissing)
+	if !siphonerr.IsCode(err, siphonerr.InplaceInfeasible) {
+		t.Fatalf("missing stream: got %v, want E_INPLACE_INFEASIBLE", err)
+	}
+
+	// A constant config passes.
+	probeStable := func(ctx context.Context, path, iv string) (*media.Probe, error) {
+		return base(320), nil
+	}
+	if err := checkRelocateConfigWith(context.Background(), "ignored", tp, probeStable); err != nil {
+		t.Fatalf("stable config: %v", err)
+	}
+}
+
+func TestRefuseRelocateDroppedAudio(t *testing.T) {
+	dir := t.TempDir()
+	src := makeRelocateMKV(t, dir, "pcm.mkv", 6, "-c:a", "pcm_s16le")
+	job := relocateMKVJob(t, src)
+	job.DropIncompatible = true
+	_, err := Run(context.Background(), job)
+	if !siphonerr.IsCode(err, siphonerr.InplaceInfeasible) {
+		t.Fatalf("got %v, want E_INPLACE_INFEASIBLE", err)
+	}
+	if !strings.Contains(err.Error(), "cannot drop audio") {
+		t.Fatalf("error does not explain the dropped stream: %v", err)
 	}
 }

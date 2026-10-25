@@ -13,9 +13,9 @@ It is a lab, not a CLI feature: no journal, no recovery, not wired into
 
 ```sh
 make build
-go test ./internal/lab/stitch/ -v          # unit + real-ffmpeg E2E + fault suite
+go test ./internal/stitch/ -v          # unit + real-ffmpeg E2E + fault suite
 
-go run ./internal/lab/stitch/cmd/stitch \
+go run ./internal/stitch/cmd/stitch \
   -segment-duration 4s -full-decode \
   -out /tmp/out.mp4 input.mkv
 ```

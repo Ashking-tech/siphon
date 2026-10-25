@@ -25,19 +25,27 @@ type Check struct {
 
 // Report is the spike's full outcome.
 type Report struct {
-	Plan        *Plan
-	Stats       IOStats
-	Fragments   []FragmentInfo
-	Init        []byte
-	InitLen     int64
-	OutPath     string
-	OutSize     int64
-	PadNS       int64 // global timeline pad applied by the patch pass
-	Checks      []Check
-	Pass        bool
-	Wall        time.Duration
-	PlanWall    time.Duration
-	ExtractWall time.Duration
+	Plan      *Plan
+	Stats     IOStats
+	Fragments []FragmentInfo
+	Init      []byte
+	InitLen   int64
+	OutPath   string
+	OutSize   int64
+	PadNS     int64 // global timeline pad applied by the patch pass
+	// SourceCounts overrides the live source packet probe (relocate resume,
+	// where the original tail is gone). TolerantCounts relaxes the comparison
+	// to the planner's ±1% estimate.
+	SourceCounts   map[string]int
+	TolerantCounts bool
+	// SourceStarts overrides the live source first-packet probe. The relocate
+	// engine captures it before the first truncation.
+	SourceStarts map[string]float64
+	Checks       []Check
+	Pass         bool
+	Wall         time.Duration
+	PlanWall     time.Duration
+	ExtractWall  time.Duration
 }
 
 // Run performs the whole spike: plan-sized extraction tail-first, per-fragment
@@ -231,7 +239,8 @@ func extractSegment(ctx context.Context, src io.ReaderAt, header []byte, seg Seg
 		"-nostdin", "-v", "error",
 		"-f", "matroska", "-i", "pipe:0",
 		"-map", "0:v", "-map", "0:a?",
-		"-c", "copy",
+		"-c", "copy", "-strict", "-2",
+		"-map_metadata", "0",
 		"-copyts", "-muxdelay", "0", "-avoid_negative_ts", "disabled",
 		"-f", "mp4",
 		"-movflags", "+empty_moov+default_base_moof+negative_cts_offsets",
@@ -282,7 +291,7 @@ func feedSegment(w io.Writer, src io.ReaderAt, header []byte, seg Segment, stats
 		stats.HeaderSends += int64(len(header))
 	}
 	buf := make([]byte, 1<<20)
-	for _, p := range seg.Pieces {
+	for pi, p := range seg.Pieces {
 		var payload int64
 		for _, rg := range p.Ranges {
 			payload += rg[1] - rg[0]
@@ -296,6 +305,19 @@ func feedSegment(w io.Writer, src io.ReaderAt, header []byte, seg Segment, stats
 			if _, err := w.Write(hdr); err != nil {
 				return err
 			}
+		}
+		if pi == len(seg.Pieces)-1 && p.Wrap && seg.TailTo > seg.TailFrom && seg.TailData != nil {
+			// The next segment's source prefix was truncated after it was
+			// processed; replay the bytes cached before that truncation.
+			if int64(len(seg.TailData)) != payload {
+				return siphonerr.New(siphonerr.StitchFailed,
+					"segment %d: cached tail is %d bytes, piece wants %d",
+					seg.Index, len(seg.TailData), payload)
+			}
+			if _, err := w.Write(seg.TailData); err != nil {
+				return err
+			}
+			continue
 		}
 		for _, rg := range p.Ranges {
 			if err := copySourceRange(w, src, buf, rg[0], rg[1], stats); err != nil {

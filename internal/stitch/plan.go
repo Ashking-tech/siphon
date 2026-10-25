@@ -48,37 +48,48 @@ type Segment struct {
 	AnchorFrom int64 // first byte the anchor walk considers in the opening cluster
 	FirstPTSNS int64
 	Pieces     []Piece
+	// TailFrom/TailTo delimit the next cluster's prefix (Timecode through the
+	// keyframe block) that rides at this segment's tail. The relocate engine
+	// caches those bytes before truncating the next segment, because that
+	// truncation removes them from the source. TailData holds the cached bytes;
+	// TailCached marks data loaded from the journal (not read this run).
+	TailFrom   int64
+	TailTo     int64
+	TailData   []byte
+	TailCached bool
 }
 
 // Plan is everything the extraction loop needs.
 type Plan struct {
-	Path            string
-	FileSize        int64
-	TimecodeScaleNS int64
-	DurationNS      int64
-	PlanSource      string // "cues" or "scan"
-	VideoTrack      uint64
-	VideoCodec      string
-	AudioTrack      uint64 // 0 when the file has no audio
-	AudioCodec      string
-	TrackMap        map[uint64]uint32 // MKV track number → MP4 track ID (video=1, audio=2)
-	Tracks          []trackInfo
-	Keyframes       []Keyframe
-	Segments        []Segment
-	ExtractBytes    int64 // exact source bytes the pieces copy (one pass)
-	PlanRead        int64 // header/index/planning bytes read at plan time
-	Header          []byte
-	HeaderRegion    int64 // [0, HeaderRegion) is the cached header
-	ReserveSize     int64
+	Path             string
+	FileSize         int64
+	TimecodeScaleNS  int64
+	DurationNS       int64  // Matroska Info duration
+	SourceDurationNS int64  // source container duration captured before truncation
+	PlanSource       string // "cues" or "scan"
+	VideoTrack       uint64
+	VideoCodec       string
+	AudioTrack       uint64 // 0 when the file has no audio
+	AudioCodec       string
+	TrackMap         map[uint64]uint32 // MKV track number → MP4 track ID (video=1, audio=2)
+	Tracks           []trackInfo
+	Keyframes        []Keyframe
+	Segments         []Segment
+	ExtractBytes     int64 // exact source bytes the pieces copy (one pass)
+	PlanRead         int64 // header/index/planning bytes read at plan time
+	Header           []byte
+	HeaderRegion     int64 // [0, HeaderRegion) is the cached header
+	ReserveSize      int64
 }
 
 // Options are the spike's knobs. They mirror the relocate flags.
 type Options struct {
 	SegmentDuration  time.Duration
 	SegmentTolerance time.Duration
-	ForceScan        bool // use the ffprobe packet scan even when Cues exist
-	VerifyFrames     int  // video frames decoded per fragment (spec default 3; 0 disables)
-	FullDecode       bool // decode the whole assembled file as a final check
+	ForceScan        bool  // use the ffprobe packet scan even when Cues exist
+	VerifyFrames     int   // video frames decoded per fragment (spec default 3; 0 disables)
+	FullDecode       bool  // decode the whole assembled file as a final check
+	EndNS            int64 // plan only up to this source time (recovery's tail cursor)
 	Log              func(format string, args ...any)
 }
 
@@ -185,9 +196,10 @@ func BuildPlan(ctx context.Context, path string, opt Options, stats *IOStats) (*
 	if !opt.ForceScan && ix.cuesOff != 0 {
 		kfs, err = keyframesFromCues(cr, h, ix, videoTrack.number, scaleNS)
 		if err != nil {
-			return nil, err
-		}
-		if planCoverage(kfs, p.DurationNS) {
+			// A truncated source keeps the SeekHead but loses the Cues near
+			// the old tail; an unreadable index falls back to the scan.
+			kfs = nil
+		} else if planCoverage(kfs, p.DurationNS) {
 			p.PlanSource = "cues"
 		} else {
 			kfs = nil
@@ -214,7 +226,11 @@ func BuildPlan(ctx context.Context, path string, opt Options, stats *IOStats) (*
 	}
 	p.Keyframes = kfs
 
-	picks, err := selectBoundaries(kfs, p.DurationNS, opt.SegmentDuration, opt.SegmentTolerance)
+	boundaryEnd := p.DurationNS
+	if boundaryEnd <= 0 || (opt.EndNS > 0 && opt.EndNS < boundaryEnd) {
+		boundaryEnd = opt.EndNS
+	}
+	picks, err := selectBoundaries(kfs, boundaryEnd, opt.SegmentDuration, opt.SegmentTolerance)
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +246,81 @@ func BuildPlan(ctx context.Context, path string, opt Options, stats *IOStats) (*
 	return p, nil
 }
 
+// ReadHeader rebuilds the cached header and track map for a source whose tail
+// has already been truncated. Recovery uses it with the journal's original
+// segment list; it never needs the destroyed Cues.
+func ReadHeader(path string) (*Plan, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, siphonerr.Wrap(siphonerr.SourceInvalid, err, "cannot open %s", path)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, siphonerr.Wrap(siphonerr.SourceInvalid, err, "cannot stat %s", path)
+	}
+	var planRead atomic.Int64
+	cr := countingReaderAt{r: f, n: &planRead}
+	h, err := parseFileHeader(cr, st.Size())
+	if err != nil {
+		return nil, err
+	}
+	ix, err := scanTopLevel(cr, h, false)
+	if err != nil {
+		return nil, err
+	}
+	if ix.firstCluster == 0 {
+		return nil, siphonerr.New(siphonerr.SourceInvalid, "%s has no Cluster elements", path)
+	}
+	scaleNS, durationNS := int64(1_000_000), int64(0)
+	if ix.infoOff != 0 {
+		scaleNS, durationNS, err = parseInfo(cr, ix.infoOff)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if ix.tracksOff == 0 {
+		return nil, siphonerr.New(siphonerr.SourceInvalid, "%s has no Tracks element", path)
+	}
+	tracks, err := parseTracks(cr, ix.tracksOff)
+	if err != nil {
+		return nil, err
+	}
+	videoTrack, err := pickVideoTrack(tracks)
+	if err != nil {
+		return nil, err
+	}
+	audioTrack, err := pickAudioTrack(tracks)
+	if err != nil {
+		return nil, err
+	}
+	p := &Plan{
+		Path:            path,
+		FileSize:        st.Size(),
+		TimecodeScaleNS: scaleNS,
+		DurationNS:      durationNS,
+		VideoTrack:      videoTrack.number,
+		VideoCodec:      videoTrack.codec,
+		AudioTrack:      audioTrack.number,
+		AudioCodec:      audioTrack.codec,
+		Tracks:          tracks,
+		HeaderRegion:    ix.firstCluster,
+	}
+	p.TrackMap = map[uint64]uint32{videoTrack.number: 1}
+	if audioTrack.number != 0 {
+		p.TrackMap[audioTrack.number] = 2
+	}
+	p.Header, err = cacheHeader(cr, h, ix, ix.firstCluster)
+	if err != nil {
+		return nil, err
+	}
+	p.ReserveSize = reserveSize(st.Size())
+	p.PlanRead = planRead.Load()
+	return p, nil
+}
+
 // pickVideoTrack returns the single video track; multi-video is out of scope
-// for the spike.
+// for relocate (safe mode handles it).
 func pickVideoTrack(tracks []trackInfo) (trackInfo, error) {
 	var vids []trackInfo
 	for _, t := range tracks {
@@ -245,12 +334,12 @@ func pickVideoTrack(tracks []trackInfo) (trackInfo, error) {
 	case 1:
 		return vids[0], nil
 	}
-	return trackInfo{}, siphonerr.New(siphonerr.FormatUnsupported,
-		"%d video tracks; the spike plans single-video files only", len(vids))
+	return trackInfo{}, siphonerr.New(siphonerr.InplaceInfeasible,
+		"%d video tracks; relocate plans single-video files only (use --mode safe)", len(vids))
 }
 
 // pickAudioTrack returns the single audio track, or the zero track when the
-// file has none. Multi-audio is out of scope for the spike (the `-map 0:a?`
+// file has none. Multi-audio is out of scope for relocate (the `-map 0:a?`
 // would emit several tracks; the anchor patch maps exactly one).
 func pickAudioTrack(tracks []trackInfo) (trackInfo, error) {
 	var auds []trackInfo
@@ -265,8 +354,8 @@ func pickAudioTrack(tracks []trackInfo) (trackInfo, error) {
 	case 1:
 		return auds[0], nil
 	}
-	return trackInfo{}, siphonerr.New(siphonerr.FormatUnsupported,
-		"%d audio tracks; the spike plans single-audio files only", len(auds))
+	return trackInfo{}, siphonerr.New(siphonerr.InplaceInfeasible,
+		"%d audio tracks; relocate plans single-audio files only (use --mode safe)", len(auds))
 }
 
 // keyframesFromCues builds the keyframe table from the Cues element.
@@ -644,6 +733,7 @@ func segmentsFromPicks(kfs []Keyframe, picks []int, segEnd int64) []Segment {
 			// CRC-32 covers the whole source cluster and would no longer
 			// match this truncated prefix.
 			if next.TCOff < next.KeyPos {
+				seg.TailFrom, seg.TailTo = next.TCOff, next.KeyPos
 				seg.Pieces = append(seg.Pieces, Piece{
 					Ranges: [][2]int64{{next.TCOff, next.KeyPos}},
 					Wrap:   true,

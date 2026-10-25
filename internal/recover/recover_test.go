@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"siphon/internal/journal"
 	"siphon/internal/progress"
 	"siphon/internal/siphonerr"
@@ -65,7 +67,7 @@ func TestRunUnknownEngine(t *testing.T) {
 	if err := os.WriteFile(src, []byte("not a real mkv"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	makeJournal(t, dir, "film", src, filepath.Join(dir, "film.mp4"), "relocate", "prepared")
+	makeJournal(t, dir, "film", src, filepath.Join(dir, "film.mp4"), "unknown", "prepared")
 
 	_, _, err := Run(context.Background(), src, progress.Noop{})
 	if !siphonerr.IsCode(err, siphonerr.RecoveryAvailable) {
@@ -118,5 +120,224 @@ func TestRunRefusesWrongInode(t *testing.T) {
 	_, _, err := Run(context.Background(), src, progress.Noop{})
 	if !siphonerr.IsCode(err, siphonerr.SourceChanged) {
 		t.Fatalf("got %v, want E_SOURCE_CHANGED", err)
+	}
+}
+
+// A relocate crash after rename can leave a finalising journal whose source is
+// empty or gone. Recovery must accept only the exact output inode it created.
+func TestRunRelocateFinalisingAfterRename(t *testing.T) {
+	for _, sourceGone := range []bool{false, true} {
+		name := "empty source"
+		if sourceGone {
+			name = "unlinked source"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "film.mkv")
+			if err := os.WriteFile(src, make([]byte, 757), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rec, err := journal.NewSource(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "film.mp4")
+			if err := os.WriteFile(target, make([]byte, 1000), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var tst unix.Stat_t
+			if err := unix.Stat(target, &tst); err != nil {
+				t.Fatal(err)
+			}
+			store, j, err := journal.Create(dir, "film")
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.Job = journal.Job{
+				Engine:      "relocate",
+				Mode:        "relocate",
+				Source:      rec,
+				Target:      journal.Target{Path: target, Format: "mp4"},
+				ReserveSize: 1000,
+				TempPath:    filepath.Join(dir, ".siphon-film-gone.tmp"),
+				TempDev:     uint64(tst.Dev),
+				TempIno:     tst.Ino,
+			}
+			j.Cursors = journal.Cursors{TailCursor: 757, SourceMtimeNS: rec.MtimeNS}
+			j.Phase = "finalising"
+			if err := store.Save(j); err != nil {
+				t.Fatal(err)
+			}
+			jp := store.Path()
+			store.Close()
+
+			if sourceGone {
+				if err := os.Remove(src); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Truncate(src, 0); err != nil {
+				t.Fatal(err)
+			}
+			res, _, err := Run(context.Background(), src, progress.Noop{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res == nil || !res.OK || res.SourceUntouched {
+				t.Fatalf("res = %+v", res)
+			}
+			if _, err := os.Stat(src); !os.IsNotExist(err) {
+				t.Fatalf("source still present: %v", err)
+			}
+			if _, err := os.Stat(target); err != nil {
+				t.Fatalf("target missing: %v", err)
+			}
+			if _, err := os.Stat(jp); !os.IsNotExist(err) {
+				t.Fatalf("journal still present: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunRelocateFinalisingRefusesForeignTarget(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "film.mkv")
+	if err := os.WriteFile(src, make([]byte, 757), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := journal.NewSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "film.mp4")
+	if err := os.WriteFile(target, make([]byte, 1000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other.tmp")
+	if err := os.WriteFile(other, make([]byte, 1000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var ost unix.Stat_t
+	if err := unix.Stat(other, &ost); err != nil {
+		t.Fatal(err)
+	}
+	store, j, err := journal.Create(dir, "film")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Job = journal.Job{
+		Engine:      "relocate",
+		Mode:        "relocate",
+		Source:      rec,
+		Target:      journal.Target{Path: target, Format: "mp4"},
+		ReserveSize: 1000,
+		TempPath:    filepath.Join(dir, ".siphon-film-gone.tmp"),
+		TempDev:     uint64(ost.Dev),
+		TempIno:     ost.Ino,
+	}
+	j.Cursors = journal.Cursors{TailCursor: 757, SourceMtimeNS: rec.MtimeNS}
+	j.Phase = "finalising"
+	if err := store.Save(j); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	if err := os.Truncate(src, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = Run(context.Background(), src, progress.Noop{})
+	if !siphonerr.IsCode(err, siphonerr.SourceChanged) {
+		t.Fatalf("got %v, want E_SOURCE_CHANGED", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("foreign target removed: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source removed: %v", err)
+	}
+}
+
+func TestRunDropsEmptyJournal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "film.mkv")
+	if err := os.WriteFile(src, []byte("source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, _, err := journal.Create(dir, "film")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jp := store.Path()
+	store.Close()
+
+	res, _, err := Run(context.Background(), src, progress.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.OK || !res.SourceUntouched {
+		t.Fatalf("res = %+v", res)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source removed: %v", err)
+	}
+	if _, err := os.Stat(jp); !os.IsNotExist(err) {
+		t.Fatalf("journal still present: %v", err)
+	}
+}
+
+func TestRunRelocateFinalisingRemovesTruncatedSource(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "film.mkv")
+	if err := os.WriteFile(src, make([]byte, 757), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := journal.NewSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "film.mp4")
+	if err := os.WriteFile(target, make([]byte, 1000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var tst unix.Stat_t
+	if err := unix.Stat(target, &tst); err != nil {
+		t.Fatal(err)
+	}
+	store, j, err := journal.Create(dir, "film")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Job = journal.Job{
+		Engine:      "relocate",
+		Mode:        "relocate",
+		Source:      rec,
+		Target:      journal.Target{Path: target, Format: "mp4"},
+		ReserveSize: 1000,
+		TempPath:    filepath.Join(dir, ".siphon-film-gone.tmp"),
+		TempDev:     uint64(tst.Dev),
+		TempIno:     tst.Ino,
+	}
+	j.Cursors = journal.Cursors{TailCursor: 757, SourceMtimeNS: rec.MtimeNS}
+	j.Phase = "finalising"
+	if err := store.Save(j); err != nil {
+		t.Fatal(err)
+	}
+	jp := store.Path()
+	store.Close()
+
+	res, _, err := Run(context.Background(), src, progress.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !res.OK || res.SourceUntouched {
+		t.Fatalf("res = %+v", res)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("source still present: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("target missing: %v", err)
+	}
+	if _, err := os.Stat(jp); !os.IsNotExist(err) {
+		t.Fatalf("journal still present: %v", err)
 	}
 }

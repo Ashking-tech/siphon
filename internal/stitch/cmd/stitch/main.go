@@ -3,7 +3,7 @@
 // segments tail-first from cached-header byte ranges, assemble a fragmented
 // MP4 with reverse pwrites over a sparse reserve, verify, and print a report.
 //
-//	go run ./internal/lab/stitch/cmd/stitch [flags] input.mkv
+//	go run ./internal/stitch/cmd/stitch [flags] input.mkv
 package main
 
 import (
@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"siphon/internal/lab/stitch"
 	"siphon/internal/siphonerr"
+	"siphon/internal/stitch"
 )
 
 func main() {
