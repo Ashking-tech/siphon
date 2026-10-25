@@ -500,6 +500,16 @@ func checkRelocateTrackPlan(ctx context.Context, job *core.Job) error {
 	return nil
 }
 
+// verifyFramesFor maps the requested verification level to the per-fragment
+// sampled decode. Structural still parses/validates the fragment boxes and
+// timings but skips the decode; sampled and full decode the configured frames.
+func verifyFramesFor(job *core.Job) int {
+	if job.Verify == "structural" {
+		return 0
+	}
+	return job.VerifyFrames
+}
+
 // probePlan extracts and sampled-decodes the first, last, and up to two middle
 // segments. It also checks that the init segment carries the source's user
 // tags, so a metadata refusal happens before the first truncation.
@@ -527,7 +537,7 @@ func probePlan(ctx context.Context, job *core.Job, sp *stitch.Plan, src *os.File
 	for _, i := range order {
 		sink.Emit(progress.Event{Phase: "probe", Percent: 2,
 			Message: fmt.Sprintf("segment %d/%d", i+1, n)})
-		res, err := ps.Prepare(ctx, i, job.VerifyFrames)
+		res, err := ps.Prepare(ctx, i, verifyFramesFor(job))
 		if err != nil {
 			code := siphonerr.StitchFailed
 			if siphonerr.IsCode(err, siphonerr.SegmentPlan) {
@@ -628,7 +638,7 @@ func runSegments(ctx context.Context, job *core.Job, j *journal.Journal, store *
 		sink.Emit(progress.Event{Phase: "encode", Percent: percent,
 			Message: fmt.Sprintf("%s  segment %d/%d", filepath.Base(job.SourcePath), i+1, len(j.Segments))})
 
-		res, err := sess.Prepare(ctx, i, job.VerifyFrames)
+		res, err := sess.Prepare(ctx, i, verifyFramesFor(job))
 		if err != nil {
 			if ctx.Err() != nil {
 				return interrupted(ctx.Err(), job.SourcePath, truncated)
