@@ -1,0 +1,686 @@
+#!/usr/bin/env bash
+#
+# siphon-gui-kde — Dolphin/ServiceMenu front-end for Siphon.
+#
+# The wrapper never parses human-readable CLI prose. It reads the stable
+# `--json` result from `siphon inspect` / `siphon convert`, and progress events
+# from the convert process's stderr. One failed file never aborts the batch;
+# failures are aggregated into a single dialog at the end.
+set -euo pipefail
+
+readonly PROG="${0##*/}"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+	cat <<'EOF'
+Usage: siphon-gui-kde convert --to <fmt> [options] <file>...
+
+Options:
+  --to <fmt>                 Target format (required)
+  --mode auto|safe|relocate|reclaim
+  --bg <colour>              Background for alpha stripping
+  --quality <1-100>          Image encoder quality
+  --bitrate <kbps>           WAV CBR bitrate
+  --segment-duration <dur>   Relocate segment window
+  --segment-tolerance <dur>  Keyframe snap tolerance
+  --verify structural|sampled|full
+  --verify-frames <n>
+  --probe-segments <n>
+  --force                    Replace an existing target
+  --drop-metadata            Permit metadata loss
+  --drop-incompatible        Drop tracks MP4 cannot carry
+  --transcode-audio          Encode incompatible audio to AAC (safe only)
+  --allow-nonstandard        Permit VP9/Opus/FLAC in MP4
+  --skip-probe               Skip the relocate stitch probe (unsafe)
+  --timeout <dur>            Subprocess deadline
+  --allow-root               Permit UID 0
+  --allow-hardlinks          Permit st_nlink > 1
+  --                         End wrapper options; remaining args are files
+
+The wrapper adds --yes and --json for the conversion. It uses kdialog for
+prompts/progress when available, qdbus6/qdbus/qdbus-qt6 for the progressbar,
+and notify-send or stderr as a last resort.
+EOF
+}
+
+die() {
+	printf '%s: %s\n' "$PROG" "$*" >&2
+	exit 2
+}
+
+# --- locate the Siphon binary ------------------------------------------------
+
+find_siphon() {
+	local candidate
+	if [[ -n ${SIPHON_BIN:-} ]]; then
+		[[ -x $SIPHON_BIN ]] || die "SIPHON_BIN is not executable: $SIPHON_BIN"
+		printf '%s\n' "$SIPHON_BIN"
+		return
+	fi
+	# Installed side-by-side (the user-local installer does this), then the
+	# conventional user bin, then a source checkout, then PATH.
+	for candidate in \
+		"$SCRIPT_DIR/siphon" \
+		"${HOME:-}/.local/bin/siphon" \
+		"$SCRIPT_DIR/../bin/siphon"; do
+		if [[ -x $candidate ]]; then
+			printf '%s\n' "$candidate"
+			return
+		fi
+	done
+	candidate="$(command -v siphon 2>/dev/null || true)"
+	if [[ -n $candidate ]]; then
+		printf '%s\n' "$candidate"
+		return
+	fi
+	die "siphon binary not found; install siphon or set SIPHON_BIN"
+}
+
+SIPHON="$(find_siphon)"
+KDIALOG="$(command -v kdialog 2>/dev/null || true)"
+QDBUS="$(command -v qdbus6 2>/dev/null || command -v qdbus 2>/dev/null || command -v qdbus-qt6 2>/dev/null || true)"
+JQ="$(command -v jq 2>/dev/null || true)"
+PYTHON="$(command -v python3 2>/dev/null || true)"
+[[ -n $JQ || -n $PYTHON ]] || die "JSON parser not found; install jq or python3"
+
+TMPDIR_RUN="$(mktemp -d "${TMPDIR:-/tmp}/siphon-kde.XXXXXX")"
+CURRENT_PID=""
+PROGRESS_REF=""
+PROGRESS_SVC=""
+PROGRESS_OBJ=""
+PROGRESS_FILE=""
+PROGRESS_FALLBACK=0
+PROGRESS_LAST=0
+PROGRESS_STYLE=""
+LAST_ERROR=""
+
+cleanup() {
+	close_progress
+	if [[ -n $CURRENT_PID ]] && kill -0 "$CURRENT_PID" 2>/dev/null; then
+		kill -INT "$CURRENT_PID" 2>/dev/null || true
+		wait "$CURRENT_PID" 2>/dev/null || true
+	fi
+	if [[ -n $TMPDIR_RUN ]]; then
+		rm -rf -- "$TMPDIR_RUN"
+	fi
+}
+
+on_signal() {
+	trap - INT TERM
+	cleanup
+	exit 130
+}
+
+trap cleanup EXIT
+trap on_signal INT TERM
+
+# --- small UI helpers -------------------------------------------------------
+
+ui_popup() {
+	local text=$1 timeout=${2:-5}
+	if [[ -n $KDIALOG ]]; then
+		"$KDIALOG" --title Siphon --passivepopup "$text" "$timeout" >/dev/null 2>&1 || true
+	elif command -v notify-send >/dev/null 2>&1; then
+		notify-send "Siphon" "$text" >/dev/null 2>&1 || true
+	else
+		printf '%s: %s\n' "$PROG" "$text" >&2
+	fi
+}
+
+ui_error() {
+	local text=$1
+	if [[ -n $KDIALOG ]]; then
+		"$KDIALOG" --title Siphon --error "$text" >/dev/null 2>&1 || true
+	else
+		printf '%s: %s\n' "$PROG" "$text" >&2
+	fi
+}
+
+# Returns 0 to continue, 1 to cancel/skip.
+ui_warning() {
+	local text=$1
+	if [[ -n $KDIALOG ]]; then
+		"$KDIALOG" --title Siphon --warningcontinuecancel "$text" >/dev/null 2>&1
+		return $?
+	fi
+	if command -v zenity >/dev/null 2>&1; then
+		zenity --question --title=Siphon --text="$text" >/dev/null 2>&1
+		return $?
+	fi
+	if [[ -t 0 ]]; then
+		printf '%s\n\nContinue? [y/N] ' "$text" >&2
+		local answer
+		read -r answer || true
+		[[ $answer == [yY] || $answer == [yY][eE][sS] ]]
+		return $?
+	fi
+	printf '%s: %s\n' "$PROG" "$text" >&2
+	return 1
+}
+
+ui_inputbox() {
+	local text=$1 default=${2:-white}
+	local value
+	if [[ -n $KDIALOG ]]; then
+		if value=$("$KDIALOG" --title Siphon --inputbox "$text" "$default" 2>/dev/null); then
+			printf '%s\n' "$value"
+			return 0
+		fi
+		return 1
+	fi
+	if command -v zenity >/dev/null 2>&1; then
+		if value=$(zenity --entry --title=Siphon --text="$text" --entry-text="$default" 2>/dev/null); then
+			printf '%s\n' "$value"
+			return 0
+		fi
+		return 1
+	fi
+	if [[ -t 0 ]]; then
+		printf '%s [%s]: ' "$text" "$default" >&2
+		read -r value || true
+		printf '%s\n' "${value:-$default}"
+		return 0
+	fi
+	return 1
+}
+
+# --- JSON helpers -----------------------------------------------------------
+
+json_query() {
+	local file=$1 query=$2
+	if [[ -n $JQ ]]; then
+		case $query in
+		ok) "$JQ" -r 'if .ok then "true" else "false" end' "$file" 2>/dev/null || true ;;
+		code) "$JQ" -r '.code // ""' "$file" 2>/dev/null || true ;;
+		message) "$JQ" -r '.message // ""' "$file" 2>/dev/null || true ;;
+		source_untouched) "$JQ" -r 'if .source_untouched then "true" else "false" end' "$file" 2>/dev/null || true ;;
+		mode) "$JQ" -r '.plan.mode // ""' "$file" 2>/dev/null || true ;;
+		crash_cost) "$JQ" -r '.plan.crash_cost // ""' "$file" 2>/dev/null || true ;;
+		warnings) "$JQ" -r '.plan.warnings[]? // empty' "$file" 2>/dev/null || true ;;
+		has_alpha) "$JQ" -r 'if .plan.has_alpha then "true" else "false" end' "$file" 2>/dev/null || true ;;
+		dropped) "$JQ" -r '.plan.dropped[]? // empty' "$file" 2>/dev/null || true ;;
+		metadata) "$JQ" -r '.plan.metadata[]? // empty' "$file" 2>/dev/null || true ;;
+		target) "$JQ" -r '.plan.target // ""' "$file" 2>/dev/null || true ;;
+		source) "$JQ" -r '.plan.source // ""' "$file" 2>/dev/null || true ;;
+		*) return 2 ;;
+		esac
+		return 0
+	fi
+	"$PYTHON" - "$file" "$query" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+path, query = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(1)
+
+plan = data.get("plan") or {}
+
+
+def emit(value):
+    if value is None:
+        return
+    if isinstance(value, bool):
+        print("true" if value else "false")
+    elif isinstance(value, list):
+        for item in value:
+            print(item)
+    else:
+        print(value)
+
+
+if query == "ok":
+    print("true" if data.get("ok") else "false")
+elif query in ("code", "message", "source_untouched"):
+    if query == "source_untouched":
+        print("true" if data.get("source_untouched") else "false")
+    else:
+        emit(data.get(query, ""))
+elif query == "mode":
+    emit(plan.get("mode", ""))
+elif query == "crash_cost":
+    emit(plan.get("crash_cost", ""))
+elif query == "warnings":
+    emit(plan.get("warnings") or [])
+elif query == "has_alpha":
+    print("true" if plan.get("has_alpha") else "false")
+elif query == "dropped":
+    emit(plan.get("dropped") or [])
+elif query == "metadata":
+    emit(plan.get("metadata") or [])
+elif query == "target":
+    emit(plan.get("target", ""))
+elif query == "source":
+    emit(plan.get("source", ""))
+else:
+    sys.exit(2)
+PY
+}
+
+progress_field() {
+	local line=$1 field=$2
+	if [[ -n $JQ ]]; then
+		printf '%s\n' "$line" | "$JQ" -r ".${field} // empty" 2>/dev/null || true
+		return 0
+	fi
+	printf '%s\n' "$line" | "$PYTHON" -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+value = data.get(sys.argv[1])
+if value is not None:
+    print(value)
+' "$field" 2>/dev/null || true
+}
+
+# --- kdialog progress -------------------------------------------------------
+
+close_progress() {
+	if [[ -n $PROGRESS_REF ]]; then
+		"$QDBUS" "$PROGRESS_SVC" "$PROGRESS_OBJ" \
+			org.kde.kdialog.ProgressDialog.close >/dev/null 2>&1 || true
+		PROGRESS_REF=""
+	fi
+}
+
+start_progress() {
+	PROGRESS_FILE=$1
+	PROGRESS_REF=""
+	PROGRESS_FALLBACK=0
+	PROGRESS_LAST=0
+	PROGRESS_STYLE=method
+	if [[ -n $KDIALOG && -n $QDBUS ]]; then
+		local ref
+		if ref=$("$KDIALOG" --title Siphon --progressbar \
+			"Converting $(basename -- "$1")" 100 2>/dev/null); then
+			if [[ $ref == *" "* ]]; then
+				PROGRESS_REF=$ref
+				PROGRESS_SVC=${ref%% *}
+				PROGRESS_OBJ=${ref#* }
+				return 0
+			fi
+		fi
+	fi
+	PROGRESS_FALLBACK=1
+	ui_popup "Converting $(basename -- "$1")…" 5
+}
+
+set_progress() {
+	local pct=$1
+	[[ $pct =~ ^[0-9]+([.][0-9]+)?$ ]] || return 0
+	pct=${pct%%.*}
+	((pct < 0)) && pct=0
+	((pct > 100)) && pct=100
+	((pct < PROGRESS_LAST)) && return 0
+	PROGRESS_LAST=$pct
+	[[ -n $PROGRESS_REF ]] || return 0
+
+	local ok=0
+	case $PROGRESS_STYLE in
+	method)
+		if "$QDBUS" "$PROGRESS_SVC" "$PROGRESS_OBJ" \
+			org.kde.kdialog.ProgressDialog.setValue "$pct" >/dev/null 2>&1; then
+			ok=1
+		elif "$QDBUS" "$PROGRESS_SVC" "$PROGRESS_OBJ" \
+			org.freedesktop.DBus.Properties.Set \
+			org.kde.kdialog.ProgressDialog value "$pct" >/dev/null 2>&1; then
+			# kdialog 26.x exposes the value as a D-Bus property instead of
+			# the older setValue method.
+			PROGRESS_STYLE=property
+			ok=1
+		fi
+		;;
+	property)
+		if "$QDBUS" "$PROGRESS_SVC" "$PROGRESS_OBJ" \
+			org.freedesktop.DBus.Properties.Set \
+			org.kde.kdialog.ProgressDialog value "$pct" >/dev/null 2>&1; then
+			ok=1
+		fi
+		;;
+	esac
+	if ((ok == 0)); then
+		close_progress
+		PROGRESS_FALLBACK=1
+		ui_popup "Converting $(basename -- "$PROGRESS_FILE")…" 5
+	fi
+}
+
+handle_progress() {
+	local line=$1 pct
+	pct="$(progress_field "$line" percent)"
+	if [[ -n $pct ]]; then
+		set_progress "$pct"
+	fi
+}
+
+# --- warning construction ---------------------------------------------------
+
+build_warning_text() {
+	local jsonfile=$1
+	local mode crash alpha
+	local -a warnings=() dropped=() lines=()
+
+	mode="$(json_query "$jsonfile" mode)"
+	crash="$(json_query "$jsonfile" crash_cost)"
+	alpha="$(json_query "$jsonfile" has_alpha)"
+	mapfile -t warnings < <(json_query "$jsonfile" warnings)
+	mapfile -t dropped < <(json_query "$jsonfile" dropped)
+
+	if [[ $mode == reclaim ]]; then
+		lines+=("Reclaim mode rewrites the source in place while converting.")
+		if [[ -n $crash ]]; then
+			lines+=("Crash cost: $crash")
+		fi
+	fi
+	if [[ $alpha == true && $to == jpg ]]; then
+		lines+=("Transparency will be flattened onto ${bg:-the chosen background}.")
+	fi
+	if ((${#dropped[@]} > 0)); then
+		lines+=("These tracks will be dropped:")
+		local item
+		for item in "${dropped[@]}"; do
+			lines+=("  - $item")
+		done
+	fi
+	if ((${#warnings[@]} > 0)); then
+		((${#lines[@]} == 0)) || lines+=("")
+		local item
+		for item in "${warnings[@]}"; do
+			# The metadata refusal was already presented and accepted; do not
+			# show the CLI's follow-up "drop-metadata set" warning again.
+			if ((drop_metadata_set == 1)) && [[ $item == --drop-metadata\ set:* ]]; then
+				continue
+			fi
+			lines+=("$item")
+		done
+	fi
+
+	((${#lines[@]} == 0)) && return 0
+	printf '%s\n' "${lines[@]}"
+}
+
+# --- per-file flow ----------------------------------------------------------
+
+add_common() {
+	inspect_flags+=("$@")
+	convert_flags+=("$@")
+}
+
+convert_file() {
+	local file=$1 fifo result rc code msg
+	fifo="$TMPDIR_RUN/progress.fifo"
+	result="$TMPDIR_RUN/result.json"
+	rm -f -- "$fifo" "$result"
+	mkfifo -- "$fifo"
+
+	"$SIPHON" convert "$file" --to "$to" "${convert_flags[@]}" --yes --json \
+		>"$result" 2>"$fifo" &
+	CURRENT_PID=$!
+	start_progress "$file"
+
+	local line
+	while IFS= read -r line; do
+		if [[ -n $line ]]; then
+			handle_progress "$line"
+		fi
+	done <"$fifo"
+
+	if wait "$CURRENT_PID"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	CURRENT_PID=""
+	close_progress
+
+	if [[ $rc -eq 0 ]]; then
+		if [[ "$(json_query "$result" ok)" == true ]]; then
+			if ((PROGRESS_FALLBACK == 1)); then
+				ui_popup "Converted $(basename -- "$file")" 5
+			fi
+			return 0
+		fi
+		code="$(json_query "$result" code)"
+		msg="$(json_query "$result" message)"
+		LAST_ERROR="$file: ${code:-E_INTERNAL}: ${msg:-conversion reported failure}"
+		return 1
+	fi
+
+	if [[ $rc -eq 130 ]]; then
+		LAST_ERROR="$file: E_INTERRUPTED: interrupted; run 'siphon recover \"$file\"'"
+		return 130
+	fi
+	code="$(json_query "$result" code)"
+	msg="$(json_query "$result" message)"
+	LAST_ERROR="$file: ${code:-E_UNKNOWN}: ${msg:-conversion failed with exit $rc}"
+	return 1
+}
+
+handle_file() {
+	local file=$1 jsonfile="$TMPDIR_RUN/inspect.json"
+	local out rc code msg attempt warn
+
+	for attempt in 1 2 3; do
+		if out=$("$SIPHON" inspect "$file" --to "$to" "${inspect_flags[@]}" --json 2>/dev/null); then
+			rc=0
+		else
+			rc=$?
+		fi
+		printf '%s' "$out" >"$jsonfile"
+
+		if [[ $rc -eq 0 ]]; then
+			break
+		fi
+
+		code="$(json_query "$jsonfile" code)"
+		msg="$(json_query "$jsonfile" message)"
+		case $code in
+		E_ALPHA_UNSUPPORTED)
+			if ((bg_set == 1)); then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			if ! bg="$(ui_inputbox \
+				"$file has transparency and JPEG cannot carry it. Background colour (name, #rrggbb, rgb(...), or transparent):" \
+				white)"; then
+				LAST_ERROR="$file: $code: cancelled at background prompt"
+				return 2
+			fi
+			[[ -n $bg ]] || bg=white
+			bg_set=1
+			add_common --bg "$bg"
+			continue
+			;;
+		E_METADATA_DROP)
+			if ((drop_metadata_set == 1)); then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			if ! ui_warning "$msg
+
+Continue and drop this metadata?"; then
+				LAST_ERROR="$file: $code: cancelled at metadata prompt"
+				return 2
+			fi
+			drop_metadata_set=1
+			add_common --drop-metadata
+			continue
+			;;
+		E_TARGET_EXISTS)
+			if ((force_set == 1)); then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			if ! ui_warning "$msg
+
+Replace the existing target?"; then
+				LAST_ERROR="$file: $code: cancelled at replace prompt"
+				return 2
+			fi
+			force_set=1
+			add_common --force
+			continue
+			;;
+		*)
+			LAST_ERROR="$file: ${code:-E_UNKNOWN}: ${msg:-inspect failed with exit $rc}"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ $rc -ne 0 ]]; then
+		code="$(json_query "$jsonfile" code)"
+		msg="$(json_query "$jsonfile" message)"
+		LAST_ERROR="$file: ${code:-E_UNKNOWN}: ${msg:-inspect failed with exit $rc}"
+		return 1
+	fi
+	if [[ "$(json_query "$jsonfile" ok)" != true ]]; then
+		LAST_ERROR="$file: E_INTERNAL: inspect did not return ok=true"
+		return 1
+	fi
+
+	warn="$(build_warning_text "$jsonfile")"
+	if [[ -n $warn ]]; then
+		if ! ui_warning "$warn"; then
+			LAST_ERROR="$file: skipped at warning"
+			return 2
+		fi
+	fi
+
+	convert_file "$file"
+}
+
+# --- argument parsing -------------------------------------------------------
+
+[[ $# -gt 0 ]] || {
+	usage
+	exit 2
+}
+
+command_name=$1
+shift
+case $command_name in
+convert) ;;
+-h | --help | help)
+	usage
+	exit 0
+	;;
+*)
+	die "unknown command '$command_name' (only 'convert' is supported)"
+	;;
+esac
+
+to=""
+bg=""
+bg_set=0
+drop_metadata_set=0
+force_set=0
+declare -a inspect_flags=()
+declare -a convert_flags=()
+
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--to)
+		[[ $# -ge 2 ]] || die "--to requires a value"
+		to=$2
+		shift 2
+		;;
+	--mode | --quality | --bitrate | --segment-duration | --segment-tolerance | --verify | --verify-frames | --probe-segments | --timeout)
+		[[ $# -ge 2 ]] || die "$1 requires a value"
+		add_common "$1" "$2"
+		shift 2
+		;;
+	--bg)
+		[[ $# -ge 2 ]] || die "--bg requires a value"
+		bg=$2
+		bg_set=1
+		add_common --bg "$2"
+		shift 2
+		;;
+	--force)
+		force_set=1
+		add_common --force
+		shift
+		;;
+	--drop-metadata)
+		drop_metadata_set=1
+		add_common --drop-metadata
+		shift
+		;;
+	--drop-incompatible | --transcode-audio | --allow-nonstandard | --skip-probe | --allow-root | --allow-hardlinks)
+		add_common "$1"
+		shift
+		;;
+	--yes | --json)
+		# The wrapper always supplies these to convert; accept them for
+		# convenience when called by hand.
+		shift
+		;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		die "unknown option '$1'"
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+[[ -n $to ]] || die "--to <fmt> is required"
+files=("$@")
+((${#files[@]} > 0)) || {
+	usage
+	exit 2
+}
+
+# --- batch loop -------------------------------------------------------------
+
+converted=0
+skipped=0
+declare -a failures=()
+
+for file in "${files[@]}"; do
+	if handle_file "$file"; then
+		converted=$((converted + 1))
+	else
+		rc=$?
+		case $rc in
+		2)
+			skipped=$((skipped + 1))
+			;;
+		130)
+			failures+=("$LAST_ERROR")
+			break
+			;;
+		*)
+			failures+=("$LAST_ERROR")
+			;;
+		esac
+	fi
+done
+
+if ((${#failures[@]} > 0)); then
+	text="Siphon: ${#failures[@]} file(s) failed:"
+	for item in "${failures[@]}"; do
+		text+=$'\n'"$item"
+	done
+	if ((skipped > 0)); then
+		text+=$'\n\n'"Skipped $skipped file(s)."
+	fi
+	ui_error "$text"
+	exit 1
+fi
+
+if ((skipped > 0)); then
+	ui_popup "Converted $converted file(s); skipped $skipped" 8
+else
+	ui_popup "Converted $converted file(s)" 5
+fi

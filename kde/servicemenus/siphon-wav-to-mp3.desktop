@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=audio/x-wav;audio/wav;audio/vnd.wave;
+Actions=convertToMp3;convertToMp3Reclaim;
+X-KDE-Submenu=Siphon
+Icon=audio-x-generic
+
+[Desktop Action convertToMp3]
+Name=Convert to MP3
+Icon=audio-x-generic
+Exec=siphon-gui-kde convert --to mp3 %F
+
+[Desktop Action convertToMp3Reclaim]
+Name=Convert to MP3 in place (saves space)
+Icon=audio-x-generic
+Exec=siphon-gui-kde convert --to mp3 --mode reclaim %F

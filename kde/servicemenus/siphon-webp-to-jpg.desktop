@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=image/webp;
+Actions=convertToJpg;
+X-KDE-Submenu=Siphon
+Icon=image-x-generic
+
+[Desktop Action convertToJpg]
+Name=Convert to JPEG
+Icon=image-x-generic
+Exec=siphon-gui-kde convert --to jpg %F

@@ -37,12 +37,14 @@ Supported pairs: WAV→MP3, MKV→MP4, PNG/JPEG/WebP matrix. See `spec.md` §3.1
 | Progress sinks | implemented (noop, terminal, plain, JSON) |
 | Preflight gate | ordered checks incl. WAV/image/MKV, MKV track policy, relocate 3-point config + 3-segment gate + space; stitch plan |
 | CLI | `convert`, `inspect`, `recover`, `doctor`, `version` |
+| CLI acceptance | real image/WAV/MKV, refusals, JSON, `--force`, crash/recover, SIGINT; `--verify structural` fixed (`0adba34`) |
 | Imaging layer (decode, orientation, ICC/EXIF/XMP, WebP, verify) | implemented + tested |
 | Video stitch core (`internal/stitch`) | production planner/extractor/assembler/verifier; standalone `cmd/stitch` harness + `RESULTS.md` + fault suite |
 | Engines | AtomicCopy (images), Sliding (WAV→MP3 safe + reclaim), Remux (MKV→MP4 safe), Relocate (MKV→MP4 fragmented, journaled) — all implemented + tested |
 | WAV parser (`internal/wav`) | implemented + tested (PCM + extensible, INFO/bext detection, header synth) |
 | Recovery driver (`internal/recover`) | sliding splice-resume, relocate exact resume, completed-rename cleanup; tested |
-| GUI | not yet (KDE wrapper planned; GUI toolkit decision pending) |
+| KDE integration | `kde/` ServiceMenus, batch-safe `siphon-gui-kde` wrapper, user-local installer, mock + real-CLI tests |
+| GUI | not yet (toolkit decision pending; KDE surface is the wrapper) |
 
 `go build ./...`, `go vet ./...`, and `go test ./...` pass; `make build` keeps
 `CGO_ENABLED=0`. `siphon doctor` and `siphon inspect` work. `siphon convert`
@@ -58,6 +60,19 @@ counts, anchors, sync, one-pass) and full decode clean. Manual crash tests at
 segment-3-done and after the finish checkpoint both recovered to a clean
 360/518-packet output. `internal/stitch/RESULTS.md` records the design and
 fault-sensitivity matrix; `internal/engine/relocate/` is the production driver.
+
+The KDE surface is implemented in `kde/`: one ServiceMenu per format pair,
+a batch-safe `siphon-gui-kde` wrapper that consumes the CLI's JSON result and
+progress events, and `kde/install.sh` (also `make install-kde`). The wrapper
+uses `kdialog` prompts, drives `kdialog --progressbar` over
+`qdbus6`/`qdbus`/`qdbus-qt6` when available, and falls back to passive popups. Mock-driven tests cover
+batch success/failure, alpha/metadata retries, warning cancellation, and the
+no-qdbus fallback; a real-CLI pass converted PNG→JPG, WAV→MP3, and MKV→MP4
+through the wrapper with mock dialogs. This host has no `qdbus6`, but has
+`qdbus-qt6`; the wrapper accepts it and handles both the older `setValue`
+method and the newer kdialog D-Bus property API. A live progressbar smoke test
+used real `kdialog` + `qdbus-qt6`, and the no-qdbus passive-popup fallback is
+covered by the mock suite.
 
 ---
 
@@ -103,7 +118,10 @@ fault-sensitivity matrix; `internal/engine/relocate/` is the production driver.
 | Relocate source duration | journal the max retained A/V stream duration before truncation | a delayed audio track can extend past Matroska Info duration; the full gate compares against the real source timeline |
 | Relocate codec policy | only copyable single video + optional audio; `--drop-incompatible` may drop subtitles/metadata, never A/V | extraction uses a fixed `-map 0:v -map 0:a?`, so a dropped A/V would still be muxed; use `--mode safe` |
 | GUI architecture | engine remains UI-agnostic; GUI consumes `--json` + progress events | decision still open on toolkit; KDE wrapper first |
-| KDE progress | `kdialog --progressbar` via `qdbus6`, fallback `--passivepopup` | `qdbus6` missing on this host, fallback matters |
+| KDE wrapper | `kde/siphon-gui-kde` is bash; `jq` or `python3` parses JSON; `kdialog` prompts; one final error dialog per batch | spec §5.3–5.4; never parses human prose for `code`/`message` |
+| KDE actions | explicit `--to` on every action; MKV adds classic-MP4 `--mode safe`; WAV adds reclaim action | the pair is fixed by the `.desktop` action; no target guessing |
+| KDE progress | `kdialog --progressbar` via `qdbus6`/`qdbus`/`qdbus-qt6`; `setValue` or D-Bus property; fallback `--passivepopup` | `qdbus6` missing but `qdbus-qt6` present; kdialog 26 uses the property API |
+| KDE install | `make install-kde` installs wrapper + `bin/siphon` under `~/.local`, menus in both Plasma paths (KIO de-dupes by filename), then `kbuildsycoca6`; menu `Exec` is rewritten to the absolute wrapper path | Dolphin's session PATH omits `~/.local/bin`; no distro package yet; `--no-binary`/`--plasma 5|6` exist for packaging |
 
 ---
 
@@ -132,6 +150,10 @@ internal/engines/               composition root: registers concrete engines
 internal/convert/               orchestrator: preflight → engine (+ tests)
 internal/cli/                   cobra commands, JSON/human output (+ tests)
 internal/version/               version string
+kde/install.sh                  user-local installer/uninstaller for Plasma 5/6
+kde/siphon-gui-kde              batch-safe kdialog/qdbus wrapper
+kde/servicemenus/*.desktop      one Dolphin ServiceMenu per format pair
+kde/test-wrapper.sh             mock-driven wrapper/installer tests
 Makefile, README.md, context.md
 ```
 
@@ -324,6 +346,32 @@ Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
 `progress.Plain` (or `progress.JSON` with `--json`); `--dry-run` aliases
 `inspect`. Exit codes per spec §5.2.
 
+### KDE integration (`kde/`)
+`kde/siphon-gui-kde convert --to <fmt> [flags] <file>...` runs `inspect
+--json` per file, prompts for `E_ALPHA_UNSUPPORTED` (`--bg`),
+`E_METADATA_DROP` (`--drop-metadata`), and `E_TARGET_EXISTS` (`--force`),
+shows plan warnings in one `--warningcontinuecancel`, then runs `convert
+--yes --json` in the background with stderr on a FIFO. Progress lines drive
+`kdialog --progressbar` via `qdbus6`/`qdbus`/`qdbus-qt6`; newer kdialog
+exposes the value as a D-Bus property, so the wrapper falls back from
+`setValue` to `Properties.Set`. Without qdbus it uses `--passivepopup` at
+start/end. One failure never aborts the batch; the final
+dialog is either a converted/skipped summary or one `--error` listing every
+`E_*` failure. The wrapper supports all convert/inspect flags needed by the
+menus and adds `--yes`/`--json` itself.
+
+`kde/servicemenus/` has one `.desktop` per pair: MKV→MP4 (relocate + classic
+safe action), WAV→MP3 (safe + reclaim action), PNG/JPG/WebP matrix. Each
+declares both `ServiceTypes` and `X-KDE-ServiceTypes` for Plasma 5/6 and uses
+`Exec=siphon-gui-kde convert --to <fmt> %F`. `kde/install.sh` installs the
+wrapper and `bin/siphon` under `$PREFIX/bin`, copies menus to both
+`$PREFIX/share/kio/servicemenus` and
+`$PREFIX/share/kservices5/ServiceMenus` (KIO de-dupes by filename;
+`--plasma 5|6` limits), rewrites each `Exec` to the absolute wrapper path
+(Dolphin's PATH omits `~/.local/bin`), and runs `kbuildsycoca6`/5.
+`make install-kde` uses `$HOME/.local` by default; `make test-kde` runs the
+mock suite.
+
 ---
 
 ## 6. Environment (this host)
@@ -335,22 +383,27 @@ Progress sink selection: TTY stderr → `progress.Terminal`; otherwise
   unexercised end to end on this host; WebP unit tests skip without the
   tools, and parser tests use synthetic RIFF containers. Install
   `libwebp-tools` before trusting WebP pairs.
-- `kdialog` and `kbuildsycoca6` present; **qdbus6 missing** → progress fallback.
+- `kdialog`, `kbuildsycoca6`, `jq`, `python3`, and `qdbus-qt6` present;
+  **qdbus6 missing**. The wrapper accepts qdbus-qt6 and both kdialog progress
+  APIs. Its no-qdbus fallback is mock-tested; a live progressbar smoke test
+  used real kdialog + qdbus-qt6.
 - Qt6 Core/Quick present; Kirigami dev package not confirmed.
 
 ---
 
 ## 7. Next steps (ordered)
 
-1. **KDE integration** — `.desktop` files, `siphon-gui-kde`, `inspect`-driven warnings.
-2. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
-3. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers, and the open verification items below.
+1. **GUI app** — toolkit decision; consume JSON/progress; queue + per-file progress.
+2. **Hardening** — fault injection (`SIPHON_FAULT`), crash matrix, FS matrix, fuzz journal/box parsers, and the open verification items below.
+3. **Packaging** — distro package should install the same `kde/` files under
+   `/usr`, use `--no-binary`, and declare `kdialog`/`jq`/`python3` options.
 
 Done: platform/journal (`7f43f93`), image engine `AtomicCopy` +
 `internal/imaging` (`b842dbf`), audio engine `Sliding` + `internal/wav` +
 `internal/recover` (`942d259`), phase-4 video stitch spike (`1087aec`),
-safe `RemuxEngine` (`13d0ed2`), and phase-5 `RelocateEngine` (committed with
-this checkpoint). `internal/stitch` is now the shared production core, not a
+safe `RemuxEngine` (`13d0ed2`), phase-5 `RelocateEngine` (`1c048ac`), the
+CLI acceptance/`--verify structural` fix (`0adba34`), and the KDE integration
+(this checkpoint). `internal/stitch` is now the shared production core, not a
 lab-only package; `cmd/stitch` remains the harness.
 
 Phase 3 end-to-end checks on this host: safe/reclaim conversion; SIGKILL
@@ -366,6 +419,18 @@ reconciliation, finalising target inode proof (empty/missing/nonzero source),
 empty-journal cleanup, and preflight relocate refusals (short, multi-stream,
 config change, dropped A/V).
 
+KDE checks on this host: `kde/test-wrapper.sh` passes batch success, refusal
+aggregation, metadata/alpha retries, warning cancellation, one-failure batch
+continuation, qdbus fallback, and install/uninstall. A real-CLI wrapper pass
+converted PNG→JPG, WAV→MP3, and MKV→MP4 with mock dialogs and mock qdbus6; the
+MKV output had 240/346 packets and decoded cleanly. A live `kdialog
+--progressbar` smoke test used real kdialog + qdbus-qt6 and exercised the
+modern property API; the no-qdbus passive-popup path is covered by the mock
+suite. The installed wrapper also converted a file with Dolphin's restricted
+session PATH. `kde/install.sh --prefix <tmp> --plasma both` installed both
+Plasma menu families and the wrapper/binary; `kbuildsycoca6` accepted the cache. The real Dolphin menu
+was not clicked in a live session on this host.
+
 ---
 
 ## 8. Deviations / open questions
@@ -376,7 +441,8 @@ config change, dropped A/V).
 - `--verify` is listed relocate-only though the full gate applies to all modes.
 - GUI toolkit not chosen. Constraint: engine stays subprocess/CLI-first so the
   GUI can be replaced without touching conversion code.
-- `qdbus6` absent locally; wrapper must test for it.
+- `qdbus6` is absent locally, but `qdbus-qt6` works and the live progressbar
+  smoke test passed. A human right-click in Dolphin remains the release check.
 - FFmpeg 8.1.3 is far newer than the 5.0 minimum; CI should pin one version.
 - WebP decode reads RIFF metadata chunks directly; `dwebp` is run without
   `-metadata` (§4.5.1 step 1 says `dwebp -metadata all`). Rationale: Siphon
@@ -457,3 +523,15 @@ config change, dropped A/V).
   the planned keyframe (±1 frame) before truncation, plus box parsing,
   sampled decode, and init strip. Full structural mdat/trun-sum and per-track
   identity/coverage checks remain full-gate work (and are open hardening items).
+- **KDE target selection**: the spec's illustrative `Exec` has no target; the
+  implementation puts `--to <fmt>` in each action because the wrapper must
+  never guess a target. Actions also expose MKV `--mode safe` and WAV
+  `--mode reclaim`; the default actions remain relocate/safe.
+- **KDE dependencies**: the wrapper needs `jq` or `python3` in addition to the
+  spec's optional `kdialog`/`qdbus`; `qdbus-qt6` is also accepted. `kdialog` is
+  the primary UI, with `zenity`/TTY/stderr fallbacks. The installer writes both
+  Plasma menu paths; KIO de-dupes them by filename, and `--plasma 5|6` limits
+  to one family for packaging.
+- **KDE live-session verification**: the menu files pass `kbuildsycoca6` and
+  the wrapper is exercised end to end with real conversions, but a human
+  right-click in a running Dolphin session is still the final release check.

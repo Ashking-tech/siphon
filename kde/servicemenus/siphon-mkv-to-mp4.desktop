@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/x-matroska;
+Actions=convertToMp4;convertToMp4Safe;
+X-KDE-Submenu=Siphon
+Icon=video-x-generic
+
+[Desktop Action convertToMp4]
+Name=Convert to MP4 (saves space)
+Icon=video-x-generic
+Exec=siphon-gui-kde convert --to mp4 %F
+
+[Desktop Action convertToMp4Safe]
+Name=Convert to classic MP4 (needs 2× space)
+Icon=video-x-generic
+Exec=siphon-gui-kde convert --to mp4 --mode safe %F

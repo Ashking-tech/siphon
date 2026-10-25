@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=image/png;
+Actions=convertToWebp;
+X-KDE-Submenu=Siphon
+Icon=image-x-generic
+
+[Desktop Action convertToWebp]
+Name=Convert to WebP
+Icon=image-x-generic
+Exec=siphon-gui-kde convert --to webp %F
