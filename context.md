@@ -65,11 +65,15 @@ The KDE surface is implemented in `kde/`: one ServiceMenu per format pair,
 a batch-safe `siphon-gui-kde` wrapper that consumes the CLI's JSON result and
 progress events, and `kde/install.sh` (also `make install-kde`). The wrapper
 uses `kdialog` prompts, drives `kdialog --progressbar` over
-`qdbus6`/`qdbus`/`qdbus-qt6` when available, and falls back to passive popups. Mock-driven tests cover
-batch success/failure, alpha/metadata retries, warning cancellation, and the
-no-qdbus fallback; a real-CLI pass converted PNG→JPG, WAV→MP3, and MKV→MP4
-through the wrapper with mock dialogs. This host has no `qdbus6`, but has
-`qdbus-qt6`; the wrapper accepts it and handles both the older `setValue`
+`qdbus6`/`qdbus`/`qdbus-qt6` when available, and falls back to passive popups.
+Metadata refusals can surface during `convert` rather than `inspect`; the
+wrapper prompts then and retries once with `--drop-metadata`. JSON `message`
+is emitted without the stable code so the wrapper displays each `E_*` code
+once. Mock-driven tests cover batch success/failure, inspect- and convert-time
+metadata retries, alpha retries, warning cancellation, and the no-qdbus
+fallback; a real-CLI pass converted PNG→JPG, WAV→MP3, and MKV→MP4 through the
+wrapper with mock dialogs. This host has no `qdbus6`, but has `qdbus-qt6`; the
+wrapper accepts it and handles both the older `setValue`
 method and the newer kdialog D-Bus property API. A live progressbar smoke test
 used real `kdialog` + `qdbus-qt6`, and the no-qdbus passive-popup fallback is
 covered by the mock suite.
@@ -118,7 +122,7 @@ covered by the mock suite.
 | Relocate source duration | journal the max retained A/V stream duration before truncation | a delayed audio track can extend past Matroska Info duration; the full gate compares against the real source timeline |
 | Relocate codec policy | only copyable single video + optional audio; `--drop-incompatible` may drop subtitles/metadata, never A/V | extraction uses a fixed `-map 0:v -map 0:a?`, so a dropped A/V would still be muxed; use `--mode safe` |
 | GUI architecture | engine remains UI-agnostic; GUI consumes `--json` + progress events | decision still open on toolkit; KDE wrapper first |
-| KDE wrapper | `kde/siphon-gui-kde` is bash; `jq` or `python3` parses JSON; `kdialog` prompts; one final error dialog per batch | spec §5.3–5.4; never parses human prose for `code`/`message` |
+| KDE wrapper | `kde/siphon-gui-kde` is bash; `jq` or `python3` parses JSON; `kdialog` prompts; one final error dialog per batch; metadata refusals are handled at inspect or convert time | spec §5.3–5.4; never parses human prose for `code`/`message`; convert-time retry adds `--drop-metadata` |
 | KDE actions | explicit `--to` on every action; MKV adds classic-MP4 `--mode safe`; WAV adds reclaim action | the pair is fixed by the `.desktop` action; no target guessing |
 | KDE progress | `kdialog --progressbar` via `qdbus6`/`qdbus`/`qdbus-qt6`; `setValue` or D-Bus property; fallback `--passivepopup` | `qdbus6` missing but `qdbus-qt6` present; kdialog 26 uses the property API |
 | KDE install | `make install-kde` installs wrapper + `bin/siphon` under `~/.local`, menus in both Plasma paths (KIO de-dupes by filename), then `kbuildsycoca6`; menu `Exec` is rewritten to the absolute wrapper path and menus are mode `0755` | Dolphin's session PATH omits `~/.local/bin`; KDE denies user-owned menus without the execute bit; no distro package yet; `--no-binary`/`--plasma 5|6` exist for packaging |
@@ -422,10 +426,13 @@ empty-journal cleanup, and preflight relocate refusals (short, multi-stream,
 config change, dropped A/V).
 
 KDE checks on this host: `kde/test-wrapper.sh` passes batch success, refusal
-aggregation, metadata/alpha retries, warning cancellation, one-failure batch
-continuation, qdbus fallback, and install/uninstall. A real-CLI wrapper pass
-converted PNG→JPG, WAV→MP3, and MKV→MP4 with mock dialogs and mock qdbus6; the
-MKV output had 240/346 packets and decoded cleanly. A live `kdialog
+aggregation, inspect- and convert-time metadata retries, alpha retries,
+warning cancellation, one-failure batch continuation, qdbus fallback, and
+install/uninstall. A real-CLI wrapper pass converted PNG→JPG, WAV→MP3, and
+MKV→MP4 with mock dialogs and mock qdbus6; the MKV output had 240/346 packets
+and decoded cleanly. A live wrapper run on the 28 s `sample_1280x720.mkv`
+exercised the convert-time `E_METADATA_DROP` prompt, retried with
+`--drop-metadata`, and produced a clean 28.235 s MP4. A live `kdialog
 --progressbar` smoke test used real kdialog + qdbus-qt6 and exercised the
 modern property API; the no-qdbus passive-popup path is covered by the mock
 suite. The installed wrapper also converted a file with Dolphin's restricted

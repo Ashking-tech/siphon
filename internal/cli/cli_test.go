@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"siphon/internal/siphonerr"
@@ -100,7 +101,7 @@ func TestConvertCommandAlphaRefusalExit2(t *testing.T) {
 	src := filepath.Join(dir, "alpha.png")
 	writeTestPNG(t, src, true)
 
-	_, err := captureStdout(t, func() error {
+	out, err := captureStdout(t, func() error {
 		root := NewRoot()
 		root.SetArgs([]string{"convert", src, "--to", "jpg", "--json"})
 		return root.Execute()
@@ -113,6 +114,22 @@ func TestConvertCommandAlphaRefusalExit2(t *testing.T) {
 	}
 	if code := siphonerr.ExitCode(err); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
+	}
+	var res struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out)
+	}
+	if res.Code != "E_ALPHA_UNSUPPORTED" {
+		t.Fatalf("code = %q", res.Code)
+	}
+	if strings.Contains(res.Message, res.Code) {
+		t.Fatalf("message duplicates code: %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "transparency") {
+		t.Fatalf("message = %q", res.Message)
 	}
 	if _, err := os.Stat(src); err != nil {
 		t.Fatal("source disappeared on refusal")

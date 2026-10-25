@@ -88,6 +88,11 @@ convert)
 		printf '{"ok":false,"code":"E_TEST","message":"mock conversion failure","source_untouched":false}\n'
 		exit 1
 	fi
+	if [[ $(basename -- "$src") == late-meta.mkv ]] && ! has_flag --drop-metadata "$@"; then
+		printf '{"phase":"encode","percent":50}\n' >&2
+		printf '{"ok":false,"code":"E_METADATA_DROP","message":"mock late metadata refusal","source_untouched":true}\n'
+		exit 2
+	fi
 	printf '{"phase":"probe","percent":1,"message":"segment 1/1"}\n' >&2
 	printf '{"phase":"encode","percent":55}\n' >&2
 	printf '{"phase":"verify","percent":90}\n' >&2
@@ -203,8 +208,8 @@ count_log() {
 }
 
 touch "$TMP/good.mkv" "$TMP/good2.mkv" "$TMP/good space.mkv" "$TMP/refuse.mkv" \
-	"$TMP/meta.wav" "$TMP/alpha.png" "$TMP/target.png" "$TMP/reclaim.wav" \
-	"$TMP/fail.mkv"
+	"$TMP/meta.wav" "$TMP/late-meta.mkv" "$TMP/alpha.png" "$TMP/target.png" \
+	"$TMP/reclaim.wav" "$TMP/fail.mkv"
 
 # 1. Batch success: inspect + convert each file, progressbar driven over DBus,
 #    one final aggregate popup.
@@ -248,6 +253,33 @@ expect_status 0
 expect_log '--drop-metadata'
 expect_log 'siphon convert'
 printf 'ok - metadata prompt/retry\n'
+
+# 4b. Metadata refusal discovered only during convert is prompted and retried.
+run_wrapper convert --to mp4 --mode safe "$TMP/late-meta.mkv"
+expect_status 0
+[[ $(count_log 'siphon convert') -eq 2 ]] || {
+	printf 'FAIL: expected late metadata convert retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log 'Continue and drop this metadata?'
+expect_log '--mode safe'
+expect_log '--drop-metadata'
+expect_log 'siphon convert'
+printf 'ok - late metadata prompt/retry\n'
+
+# 4c. Cancelling the late metadata prompt skips the file without a target.
+export KD_WARN_RC=1
+run_wrapper convert --to mp4 "$TMP/late-meta.mkv"
+unset KD_WARN_RC
+expect_status 0
+[[ $(count_log 'siphon convert') -eq 1 ]] || {
+	printf 'FAIL: cancelled late metadata should not retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log 'skipped 1'
+printf 'ok - late metadata cancel\n'
 
 # 5. Alpha refusal is prompted for a background, then retried.
 run_wrapper convert --to jpg "$TMP/alpha.png"

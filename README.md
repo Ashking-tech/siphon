@@ -41,7 +41,9 @@ KIO de-duplicates the two paths by filename, so only one menu appears. The
 installed actions use the absolute wrapper path, so they work even when
 Dolphin's session PATH omits `~/.local/bin`. The menus are installed
 executable (`0755`) because KDE rejects user-owned ServiceMenu files without
-the execute bit. Right-click a supported file in Dolphin and choose
+the execute bit. All successful conversions replace the source with the
+target; the classic safe action only differs in temporary space, not in
+keeping the original. Right-click a supported file in Dolphin and choose
 **Siphon**.
 
 Useful options:
@@ -57,9 +59,10 @@ The wrapper uses `kdialog` for prompts and batch summaries. When `qdbus6`,
 `qdbus`, or `qdbus-qt6` is available it drives a `kdialog --progressbar`
 (supporting both the older `setValue` method and the newer D-Bus property
 API); otherwise it falls back to passive popups. It reads `siphon --json`
-results and progress events, never human-readable CLI prose. Install `jq` or
-`python3` for the wrapper's JSON parsing. The WebP menu entries require
-`libwebp-tools`.
+results and progress events, never human-readable CLI prose. Metadata loss can
+be reported only after the mux starts; the wrapper then prompts and retries
+with `--drop-metadata`. Install `jq` or `python3` for the wrapper's JSON
+parsing. The WebP menu entries require `libwebp-tools`.
 
 ## Status
 

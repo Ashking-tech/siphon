@@ -68,6 +68,22 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Cause }
 
+// MessageOf returns the human-readable error text without the stable code
+// prefix. JSON consumers receive the code separately.
+func MessageOf(err error) string {
+	if err == nil {
+		return ""
+	}
+	var se *Error
+	if errors.As(err, &se) {
+		if se.Cause != nil {
+			return fmt.Sprintf("%s: %v", se.Message, se.Cause)
+		}
+		return se.Message
+	}
+	return err.Error()
+}
+
 // New builds an error with a formatted message.
 func New(code Code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}

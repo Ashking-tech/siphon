@@ -56,7 +56,7 @@ func resultForErr(err error, plan *core.Plan) *core.Result {
 	return &core.Result{
 		OK:              false,
 		Code:            string(siphonerr.CodeOf(err)),
-		Message:         err.Error(),
+		Message:         siphonerr.MessageOf(err),
 		Plan:            plan,
 		SourceUntouched: siphonerr.SourceUntouched(err),
 	}

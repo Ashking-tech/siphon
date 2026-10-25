@@ -412,7 +412,7 @@ add_common() {
 }
 
 convert_file() {
-	local file=$1 fifo result rc code msg
+	local file=$1 fifo result rc code msg prompt
 	fifo="$TMPDIR_RUN/progress.fifo"
 	result="$TMPDIR_RUN/result.json"
 	rm -f -- "$fifo" "$result"
@@ -438,26 +438,39 @@ convert_file() {
 	CURRENT_PID=""
 	close_progress
 
-	if [[ $rc -eq 0 ]]; then
-		if [[ "$(json_query "$result" ok)" == true ]]; then
-			if ((PROGRESS_FALLBACK == 1)); then
-				ui_popup "Converted $(basename -- "$file")" 5
-			fi
-			return 0
+	if [[ $rc -eq 0 && "$(json_query "$result" ok)" == true ]]; then
+		if ((PROGRESS_FALLBACK == 1)); then
+			ui_popup "Converted $(basename -- "$file")" 5
 		fi
-		code="$(json_query "$result" code)"
-		msg="$(json_query "$result" message)"
-		LAST_ERROR="$file: ${code:-E_INTERNAL}: ${msg:-conversion reported failure}"
-		return 1
+		return 0
 	fi
 
 	if [[ $rc -eq 130 ]]; then
 		LAST_ERROR="$file: E_INTERRUPTED: interrupted; run 'siphon recover \"$file\"'"
 		return 130
 	fi
+
 	code="$(json_query "$result" code)"
 	msg="$(json_query "$result" message)"
-	LAST_ERROR="$file: ${code:-E_UNKNOWN}: ${msg:-conversion failed with exit $rc}"
+	if [[ $code == E_METADATA_DROP && $drop_metadata_set -eq 0 ]]; then
+		prompt=${msg:-The output cannot carry some metadata.}
+		if ! ui_warning "$prompt
+
+Continue and drop this metadata?"; then
+			LAST_ERROR="$file: $code: cancelled at metadata prompt"
+			return 2
+		fi
+		drop_metadata_set=1
+		add_common --drop-metadata
+		convert_file "$file"
+		return $?
+	fi
+
+	if [[ $rc -eq 0 ]]; then
+		LAST_ERROR="$file: ${code:-E_INTERNAL}: ${msg:-conversion reported failure}"
+	else
+		LAST_ERROR="$file: ${code:-E_UNKNOWN}: ${msg:-conversion failed with exit $rc}"
+	fi
 	return 1
 }
 

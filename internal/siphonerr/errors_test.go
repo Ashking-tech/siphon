@@ -54,3 +54,18 @@ func TestUntouched(t *testing.T) {
 		t.Fatal("expected untouched")
 	}
 }
+
+func TestMessageOf(t *testing.T) {
+	if got := MessageOf(New(Permission, "cannot write target")); got != "cannot write target" {
+		t.Fatalf("got %q", got)
+	}
+	if got := MessageOf(Wrap(SourceCorrupt, errors.New("bad header"), "invalid source")); got != "invalid source: bad header" {
+		t.Fatalf("got %q", got)
+	}
+	if got := MessageOf(errors.New("plain")); got != "plain" {
+		t.Fatalf("got %q", got)
+	}
+	if got := MessageOf(nil); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}

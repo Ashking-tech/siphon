@@ -78,7 +78,7 @@ func printError(err error) {
 		res := &core.Result{
 			OK:              false,
 			Code:            string(siphonerr.CodeOf(err)),
-			Message:         err.Error(),
+			Message:         siphonerr.MessageOf(err),
 			SourceUntouched: siphonerr.SourceUntouched(err),
 		}
 		emitJSON(res)
@@ -111,7 +111,7 @@ func emitFailure(res *core.Result, err error) error {
 			res = &core.Result{
 				OK:              false,
 				Code:            string(siphonerr.CodeOf(err)),
-				Message:         err.Error(),
+				Message:         siphonerr.MessageOf(err),
 				SourceUntouched: siphonerr.SourceUntouched(err),
 			}
 		}
