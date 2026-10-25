@@ -39,8 +39,10 @@ both the Plasma 6 (`kio/servicemenus`) and Plasma 5
 (`kservices5/ServiceMenus`) locations, and rebuilds the KDE service cache.
 KIO de-duplicates the two paths by filename, so only one menu appears. The
 installed actions use the absolute wrapper path, so they work even when
-Dolphin's session PATH omits `~/.local/bin`. Right-click a supported file in
-Dolphin and choose **Siphon**.
+Dolphin's session PATH omits `~/.local/bin`. The menus are installed
+executable (`0755`) because KDE rejects user-owned ServiceMenu files without
+the execute bit. Right-click a supported file in Dolphin and choose
+**Siphon**.
 
 Useful options:
 

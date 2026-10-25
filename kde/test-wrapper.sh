@@ -324,11 +324,20 @@ for dir in "$INSTALL/share/kio/servicemenus" "$INSTALL/share/kservices5/ServiceM
 		printf 'FAIL: installed Exec still relies on PATH\n' >&2
 		exit 1
 	fi
+	[[ -x $dir/siphon-mkv-to-mp4.desktop ]] || {
+		printf 'FAIL: installed menu is not executable (KDE will deny it)\n' >&2
+		stat -c '%A %n' "$dir/siphon-mkv-to-mp4.desktop" >&2
+		exit 1
+	}
 done
 for f in "$ROOT"/kde/servicemenus/*.desktop; do
 	grep -Fq 'Type=Service' "$f" || exit 1
 	grep -Fq 'MimeType=' "$f" || exit 1
 	grep -Fq 'Exec=siphon-gui-kde convert --to ' "$f" || exit 1
+	[[ -x $f ]] || {
+		printf 'FAIL: source menu is not executable: %s\n' "$f" >&2
+		exit 1
+	}
 done
 PATH="$MOCK_NO_QDBUS" "$INSTALL/bin/siphon-gui-kde" --help >/dev/null
 "$INSTALLER" --prefix "$INSTALL" --plasma both --no-cache --uninstall >/dev/null

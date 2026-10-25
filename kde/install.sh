@@ -177,7 +177,8 @@ for src in "$SCRIPT_DIR"/servicemenus/siphon-*.desktop; do
 				printf '%s\n' "$line"
 			fi
 		done <"$src" >"$tmp"
-		install -m 0644 -- "$tmp" "$dir/$(basename -- "$src")"
+		# KDE refuses user-owned ServiceMenu files without the execute bit.
+		install -m 0755 -- "$tmp" "$dir/$(basename -- "$src")"
 		rm -f -- "$tmp"
 	done
 done

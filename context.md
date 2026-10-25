@@ -121,7 +121,7 @@ covered by the mock suite.
 | KDE wrapper | `kde/siphon-gui-kde` is bash; `jq` or `python3` parses JSON; `kdialog` prompts; one final error dialog per batch | spec §5.3–5.4; never parses human prose for `code`/`message` |
 | KDE actions | explicit `--to` on every action; MKV adds classic-MP4 `--mode safe`; WAV adds reclaim action | the pair is fixed by the `.desktop` action; no target guessing |
 | KDE progress | `kdialog --progressbar` via `qdbus6`/`qdbus`/`qdbus-qt6`; `setValue` or D-Bus property; fallback `--passivepopup` | `qdbus6` missing but `qdbus-qt6` present; kdialog 26 uses the property API |
-| KDE install | `make install-kde` installs wrapper + `bin/siphon` under `~/.local`, menus in both Plasma paths (KIO de-dupes by filename), then `kbuildsycoca6`; menu `Exec` is rewritten to the absolute wrapper path | Dolphin's session PATH omits `~/.local/bin`; no distro package yet; `--no-binary`/`--plasma 5|6` exist for packaging |
+| KDE install | `make install-kde` installs wrapper + `bin/siphon` under `~/.local`, menus in both Plasma paths (KIO de-dupes by filename), then `kbuildsycoca6`; menu `Exec` is rewritten to the absolute wrapper path and menus are mode `0755` | Dolphin's session PATH omits `~/.local/bin`; KDE denies user-owned menus without the execute bit; no distro package yet; `--no-binary`/`--plasma 5|6` exist for packaging |
 
 ---
 
@@ -368,7 +368,9 @@ wrapper and `bin/siphon` under `$PREFIX/bin`, copies menus to both
 `$PREFIX/share/kio/servicemenus` and
 `$PREFIX/share/kservices5/ServiceMenus` (KIO de-dupes by filename;
 `--plasma 5|6` limits), rewrites each `Exec` to the absolute wrapper path
-(Dolphin's PATH omits `~/.local/bin`), and runs `kbuildsycoca6`/5.
+(Dolphin's PATH omits `~/.local/bin`), installs them `0755` (KDE denies
+user-owned ServiceMenu files without the execute bit), and runs
+`kbuildsycoca6`/5.
 `make install-kde` uses `$HOME/.local` by default; `make test-kde` runs the
 mock suite.
 
@@ -532,6 +534,10 @@ was not clicked in a live session on this host.
   the primary UI, with `zenity`/TTY/stderr fallbacks. The installer writes both
   Plasma menu paths; KIO de-dupes them by filename, and `--plasma 5|6` limits
   to one family for packaging.
+- **KDE menu authorization**: user-owned ServiceMenu files must be executable.
+  Dolphin logged “not owned by root and executable flag not set” while the
+  installer wrote `0644`; menus are now installed `0755`, and the mock suite
+  asserts the installed mode.
 - **KDE live-session verification**: the menu files pass `kbuildsycoca6` and
   the wrapper is exercised end to end with real conversions, but a human
   right-click in a running Dolphin session is still the final release check.
