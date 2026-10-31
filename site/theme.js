@@ -1,10 +1,8 @@
 (() => {
   const root = document.documentElement;
   const toggle = document.querySelector(".theme-toggle");
+  const themeColor = document.querySelector('meta[name="theme-color"]');
   const storageKey = "siphon-theme";
-  const systemTheme = window.matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
 
   let savedTheme = null;
   try {
@@ -13,10 +11,11 @@
     // The toggle still works for this page if storage is unavailable.
   }
 
-  let theme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : systemTheme;
+  let theme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
 
   const updateTheme = () => {
     root.dataset.theme = theme;
+    themeColor.content = theme === "light" ? "#f5f7f3" : "#080909";
     toggle.textContent = `Switch to ${theme === "dark" ? "light" : "dark"} mode`;
     toggle.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} mode`);
   };
