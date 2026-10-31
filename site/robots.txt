@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://siphon.example/sitemap.xml
+Sitemap: https://ashking-tech.github.io/siphon/sitemap.xml

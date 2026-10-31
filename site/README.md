@@ -18,22 +18,10 @@ python3 -m http.server 8000 --directory site
 
 ## Before publishing
 
-Search the site for these placeholders and replace them:
-
-| Placeholder | Replace with |
-|---|---|
-| `github.com/OWNER/siphon` | the real repository path |
-| `siphon.example` | the production domain |
-| `<!-- TODO: add the published license before launch. -->` | the real license line, once published |
-| `the Siphon authors` | the real author or project credit |
-| `og:image` / canonical / sitemap URLs | the production domain |
-
-The social card also renders the domain, so regenerate `og.png` after replacing
-`siphon.example`.
-
-The release links point at `https://github.com/OWNER/siphon/releases`. There are
-no release artifacts yet, so the page deliberately does not offer a Siphon
-download button, checksum, or Siphon package name.
+The site is configured for `https://ashking-tech.github.io/siphon/`. The social
+card source is `og.html`; regenerate `og.png` after changing the published URL.
+There are no release artifacts yet, so the page deliberately does not offer a
+Siphon download button, checksum, or package name.
 
 ## Files
 

@@ -10,24 +10,23 @@
 <meta name="theme-color" content="#f5f7f3" media="(prefers-color-scheme: light)">
 <title>Siphon: convert media in place without a second copy</title>
 <meta name="description" content="Siphon is a media converter for Linux that converts video, audio, images and PDFs in place. It verifies the output before consuming the source, so a 60 GB film needs a few hundred megabytes free.">
-<!-- TODO: replace siphon.example with the production domain before publishing. -->
-<link rel="canonical" href="https://siphon.example/">
+<link rel="canonical" href="https://ashking-tech.github.io/siphon/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<meta property="og:url" content="https://siphon.example/">
+<meta property="og:url" content="https://ashking-tech.github.io/siphon/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Siphon">
 <meta property="og:title" content="Siphon: convert media in place without a second copy">
 <meta property="og:description" content="A media converter for Linux that writes and verifies the output before consuming the source. A 60 GB film converts with a few hundred megabytes free.">
-<meta property="og:image" content="https://siphon.example/og.png">
+<meta property="og:image" content="https://ashking-tech.github.io/siphon/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Siphon: convert in place. No second copy.">
 <meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
-{"@type":"WebSite","@id":"https://siphon.example/#website","name":"Siphon","alternateName":"siphon","url":"https://siphon.example/","inLanguage":"en"},
-{"@type":"SoftwareApplication","@id":"https://siphon.example/#software","name":"Siphon","alternateName":"siphon","description":"A media converter for Linux that converts video, audio, images and PDFs in place, verifying the output before it consumes the source.","applicationCategory":"UtilitiesApplication","applicationSubCategory":"Media converter","operatingSystem":"Linux","softwareVersion":"0.1.0-dev","url":"https://siphon.example/","codeRepository":"https://github.com/OWNER/siphon"},
-{"@type":"FAQPage","@id":"https://siphon.example/#questions","mainEntity":[
+{"@type":"WebSite","@id":"https://ashking-tech.github.io/siphon/#website","name":"Siphon","alternateName":"siphon","url":"https://ashking-tech.github.io/siphon/","inLanguage":"en"},
+{"@type":"SoftwareApplication","@id":"https://ashking-tech.github.io/siphon/#software","name":"Siphon","alternateName":"siphon","description":"A media converter for Linux that converts video, audio, images and PDFs in place, verifying the output before it consumes the source.","applicationCategory":"UtilitiesApplication","applicationSubCategory":"Media converter","operatingSystem":"Linux","softwareVersion":"0.1.0-dev","url":"https://ashking-tech.github.io/siphon/","codeRepository":"https://github.com/Ashking-tech/siphon"},
+{"@type":"FAQPage","@id":"https://ashking-tech.github.io/siphon/#questions","mainEntity":[
 {"@type":"Question","name":"Is it safe?","acceptedAnswer":{"@type":"Answer","text":"Yes. Safe modes keep the source byte-identical until the output is verified and renamed. Video relocate verifies each segment before truncating it. siphon recover resumes after a crash."}},
 {"@type":"Question","name":"How much free space does it need?","acceptedAnswer":{"@type":"Answer","text":"Video needs one segment, typically 30 to 600 MB. Safe-only pairs need room for the source and the output. siphon inspect prints the exact figure."}},
 {"@type":"Question","name":"Does it overwrite my original?","acceptedAnswer":{"@type":"Answer","text":"The source is consumed on success. Safe modes leave it untouched until verification. If you need to keep it, copy it first when you have room."}},
@@ -67,7 +66,7 @@
 <div class="status"><span class="live-dot"></span> v0.1.0-dev · Linux</div>
 <div class="top-links">
 <button class="theme-toggle" type="button" hidden>Switch to light mode</button>
-<a class="ghost" href="https://github.com/OWNER/siphon">Star on GitHub</a>
+<a class="ghost" href="https://github.com/Ashking-tech/siphon">Star on GitHub</a>
 </div>
 </header>
 
@@ -135,14 +134,14 @@
 <h3>CLI</h3>
 <div class="code-card">
 <header><span class="code-card-title">Build and install</span><span>shell</span></header>
-<pre><code><span class="code-command">git clone https://github.com/OWNER/siphon.git</span>
+<pre><code><span class="code-command">git clone https://github.com/Ashking-tech/siphon.git</span>
 <span class="code-command">cd siphon</span>
 <span class="code-command">make build</span>
 <span class="code-command">sudo install -Dm755 bin/siphon /usr/local/bin/siphon</span>
 <span class="code-command">siphon doctor</span></code></pre>
 </div>
 <div class="note-card">
-<p><strong>No release binaries yet.</strong> Distribution packages are planned. Watch the <a href="https://github.com/OWNER/siphon/releases">releases page</a> for the first tagged build.</p>
+<p><strong>No release binaries yet.</strong> Distribution packages are planned. Watch the <a href="https://github.com/Ashking-tech/siphon/releases">releases page</a> for the first tagged build.</p>
 </div>
 </div>
 <aside>
@@ -270,9 +269,9 @@
 <p class="footer-tagline">Convert media in place on Linux.</p>
 </div>
 <div class="footer-links">
-<a href="https://github.com/OWNER/siphon/blob/main/spec.md">Specification</a>
-<a href="https://github.com/OWNER/siphon">Source code</a>
-<a href="https://github.com/OWNER/siphon/issues">Report a bug</a>
+<a href="https://github.com/Ashking-tech/siphon/blob/main/spec.md">Specification</a>
+<a href="https://github.com/Ashking-tech/siphon">Source code</a>
+<a href="https://github.com/Ashking-tech/siphon/issues">Report a bug</a>
 <a href="#download">Get Siphon</a>
 </div>
 </div>

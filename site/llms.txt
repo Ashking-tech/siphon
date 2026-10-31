@@ -42,7 +42,7 @@ Formula: `free = segment_duration × total_bitrate / 8 + 16 MB`.
 
 ## Links
 
-- Source: https://github.com/OWNER/siphon
-- Specification: https://github.com/OWNER/siphon/blob/main/spec.md
-- Issues: https://github.com/OWNER/siphon/issues
-- Site: https://siphon.example/
+- Source: https://github.com/Ashking-tech/siphon
+- Specification: https://github.com/Ashking-tech/siphon/blob/main/spec.md
+- Issues: https://github.com/Ashking-tech/siphon/issues
+- Site: https://ashking-tech.github.io/siphon/

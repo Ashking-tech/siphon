@@ -12,6 +12,10 @@ Siphon provides a command-line interface and an optional KDE Dolphin
 ServiceMenu. It works offline and sends no telemetry. The project is under
 active development; release binaries are not published yet.
 
+The static website is in [`site/`](site/) and publishes at
+[ashking-tech.github.io/siphon](https://ashking-tech.github.io/siphon/) after
+GitHub Pages is enabled for the repository.
+
 ## Supported conversions
 
 | Category | Conversions |
