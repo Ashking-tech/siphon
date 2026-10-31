@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,11 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 	}
 	job.Mode = mode
 	job.Engine = formats.EngineFor(job.Pair, mode)
+
+	// 3b. Every explicitly supplied flag must apply to this pair (spec §5.1).
+	if err := validateNewPairFlags(job); err != nil {
+		return nil, refuse(err)
+	}
 
 	// 4. Hardlinks.
 	var st unix.Stat_t
@@ -103,6 +109,21 @@ func Run(ctx context.Context, job *core.Job) (*core.Plan, error) {
 		return nil, refuse(err)
 	}
 	job.Tools = toolVersions
+
+	// v0.2 document/image and media pairs have their own gate. It returns a
+	// partial plan together with a refusal when the plan is informative
+	// (for example E_TRANSCODE_REQUIRED).
+	if formats.IsV02Pair(job.Pair) {
+		plan, err := runNewPair(ctx, job, info)
+		if err != nil {
+			return plan, err
+		}
+		if plan == nil {
+			return nil, refuse(siphonerr.New(siphonerr.Internal,
+				"no v0.2 pre-flight plan for %s → %s", job.Source, job.Target))
+		}
+		return plan, nil
+	}
 
 	// 8/13/15. Probe and validate the container. MKV video needs an ffprobe
 	// pass for its space model; WAV is read from its own header, which is
@@ -567,14 +588,75 @@ func crashCost(job *core.Job) string {
 
 // FormatPlan renders the human `inspect` output.
 func FormatPlan(p *core.Plan) string {
+	if p == nil {
+		return ""
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s → %s\n", p.Source, p.Target)
+	if p.Refusal != "" {
+		fmt.Fprintf(&b, "  refusal     %s\n", p.Refusal)
+	}
 	fmt.Fprintf(&b, "  mode        %s\n", p.Mode)
+	if p.PDF != nil {
+		if p.PDF.Pages == 1 {
+			fmt.Fprintf(&b, "  pages       1 (single-page requirement met)\n")
+		} else {
+			fmt.Fprintf(&b, "  pages       %d\n", p.PDF.Pages)
+		}
+		fmt.Fprintf(&b, "  page        %s × %s pt, rotation %d\n",
+			formatFloat(p.PDF.PageWidthPT), formatFloat(p.PDF.PageHeightPT), p.PDF.Rotation)
+	}
+	if p.Render != nil {
+		fmt.Fprintf(&b, "  render      %d DPI → %d × %d px\n",
+			p.Render.DPI, p.Render.WidthPX, p.Render.HeightPX)
+	}
+	if p.Page != nil && p.ImageWidth > 0 {
+		fmt.Fprintf(&b, "  page        %d × %d px at %s DPI → %.1f × %.1f in\n",
+			p.ImageWidth, p.ImageHeight, formatFloat(p.Page.DPI),
+			p.Page.WidthPT/72, p.Page.HeightPT/72)
+	}
+	if p.HasAlpha && formats.IsImagePDFPair(formats.Pair{
+		Source: parseFormat(p.SourceFormat), Target: parseFormat(p.TargetFormat),
+	}) {
+		fmt.Fprintf(&b, "  alpha       preserved with SMask\n")
+	}
+	if p.Media != nil {
+		fmt.Fprintf(&b, "  media       %s\n", mediaSummary(p.Media))
+		video, audio, subtitles := mediaCounts(p.Media.Streams)
+		fmt.Fprintf(&b, "  streams     %d video, %d audio, %d subtitles\n", video, audio, subtitles)
+	}
+	if p.Transcode != nil {
+		if p.Transcode.VideoCodec != "" {
+			fmt.Fprintf(&b, "  video       %s CRF %d, yuv420p\n",
+				codecLabel(p.Transcode.VideoCodec), p.Transcode.VideoQuality)
+		}
+		if p.Transcode.AudioCodec != "" {
+			if p.Transcode.AudioBitrate > 0 {
+				fmt.Fprintf(&b, "  audio       %s %d kbps\n",
+					codecLabel(p.Transcode.AudioCodec), p.Transcode.AudioBitrate)
+			} else {
+				fmt.Fprintf(&b, "  audio       %s\n", codecLabel(p.Transcode.AudioCodec))
+			}
+		}
+	}
+	if p.Audio != nil {
+		mode := "VBR V2"
+		if p.Audio.Bitrate > 0 {
+			mode = fmt.Sprintf("CBR %d kbps", p.Audio.Bitrate)
+		}
+		fmt.Fprintf(&b, "  audio       track %d (%s) → MP3 %s\n",
+			p.Audio.Track, codecLabel(p.Audio.SourceCodec), mode)
+		fmt.Fprintf(&b, "  video       dropped\n")
+	}
+	if p.GIF != nil {
+		fmt.Fprintf(&b, "  gif         width %d px, %s fps, loops forever\n",
+			p.GIF.Width, formatFloat(p.GIF.FPS))
+	}
 	fmt.Fprintf(&b, "  output      %s\n", p.OutputKind)
 	if p.PlanSource != "" {
 		fmt.Fprintf(&b, "  plan        %s\n", p.PlanSource)
 	}
-	if len(p.Streams) > 0 {
+	if len(p.Streams) > 0 && p.Media == nil {
 		fmt.Fprintf(&b, "  streams     %s\n", strings.Join(p.Streams, ", "))
 	}
 	if len(p.Dropped) > 0 {
@@ -586,7 +668,7 @@ func FormatPlan(p *core.Plan) string {
 	if p.Verify != "" {
 		fmt.Fprintf(&b, "  verify      %s\n", p.Verify)
 	}
-	if p.ImageWidth > 0 {
+	if p.ImageWidth > 0 && p.Page == nil {
 		alpha := ""
 		if p.HasAlpha {
 			alpha = " (has alpha)"
@@ -603,12 +685,109 @@ func FormatPlan(p *core.Plan) string {
 	if len(p.AudioTags) > 0 {
 		fmt.Fprintf(&b, "  tags        %s (dropped)\n", strings.Join(p.AudioTags, ", "))
 	}
-	fmt.Fprintf(&b, "  free needed %s     you have %s\n", p.FreeNeededHuman, p.FreeAvailableHuman)
-	fmt.Fprintf(&b, "  crash cost  %s\n", p.CrashCost)
+	if p.FreeNeededHuman != "" {
+		fmt.Fprintf(&b, "  free needed %s     you have %s\n", p.FreeNeededHuman, p.FreeAvailableHuman)
+	}
+	if p.CrashCost != "" {
+		fmt.Fprintf(&b, "  crash cost  %s\n", p.CrashCost)
+	}
 	for _, w := range p.Warnings {
 		fmt.Fprintf(&b, "  warning     %s\n", w)
 	}
+	for _, name := range []string{
+		"transcode_required", "allow_nonstandard", "drop_incompatible",
+		"drop_metadata", "bg_required", "audio_track", "no_audio",
+	} {
+		if p.Hints[name] {
+			fmt.Fprintf(&b, "  hint        %s\n", hintText(name))
+		}
+	}
 	return b.String()
+}
+
+func parseFormat(s string) formats.Format { return formats.Format(s) }
+
+func formatFloat(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+func mediaSummary(m *core.MediaPlan) string {
+	var parts []string
+	for _, s := range m.Streams {
+		parts = append(parts, fmt.Sprintf("%s %s", s.Action, codecLabel(s.Codec)))
+	}
+	kind := "copy"
+	if m.Transcode {
+		kind = "transcode"
+	} else if m.Remux {
+		kind = "remux"
+	}
+	if len(parts) == 0 {
+		return kind
+	}
+	return kind + ": " + strings.Join(parts, ", ")
+}
+
+func mediaCounts(streams []core.MediaStream) (video, audio, subtitles int) {
+	for _, s := range streams {
+		switch s.Type {
+		case "video":
+			video++
+		case "audio":
+			audio++
+		case "subtitle":
+			subtitles++
+		}
+	}
+	return
+}
+
+func codecLabel(codec string) string {
+	switch strings.ToLower(codec) {
+	case "h264":
+		return "H.264"
+	case "hevc":
+		return "HEVC"
+	case "vp8":
+		return "VP8"
+	case "vp9":
+		return "VP9"
+	case "av1":
+		return "AV1"
+	case "aac":
+		return "AAC"
+	case "opus":
+		return "Opus"
+	case "vorbis":
+		return "Vorbis"
+	case "mp3":
+		return "MP3"
+	case "gif":
+		return "GIF"
+	case "":
+		return "none"
+	}
+	return codec
+}
+
+func hintText(name string) string {
+	switch name {
+	case "transcode_required":
+		return "rerun with --transcode to accept re-encoding"
+	case "allow_nonstandard":
+		return "rerun with --allow-nonstandard to accept a nonstandard remux, or --transcode"
+	case "drop_incompatible":
+		return "rerun with --drop-incompatible to skip the incompatible stream"
+	case "drop_metadata":
+		return "rerun with --drop-metadata to accept the metadata loss"
+	case "bg_required":
+		return "rerun with --bg <colour> to flatten transparency"
+	case "audio_track":
+		return "choose a valid zero-based --audio-track ordinal"
+	case "no_audio":
+		return "the source has no audio track to extract"
+	}
+	return name
 }
 
 func humanDuration(d time.Duration) string {

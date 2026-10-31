@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,12 +25,16 @@ type PacketCount struct {
 func CountPackets(ctx context.Context, path string) ([]PacketCount, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, siphonerr.Wrap(siphonerr.VerifyFailed, err, "cannot resolve %s", path)
+	}
 	cmd := exec.CommandContext(ctx, "ffprobe",
 		"-v", "error",
 		"-count_packets",
 		"-show_entries", "stream=index,codec_type,nb_read_packets",
 		"-of", "json",
-		path,
+		"-i", abs,
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -53,6 +58,16 @@ func CountPackets(ctx context.Context, path string) ([]PacketCount, error) {
 	}
 	out := make([]PacketCount, 0, len(raw.Streams))
 	for _, s := range raw.Streams {
+		if s.Packets == "" || s.Packets == "N/A" {
+			// Attachment and data streams do not carry packets in every
+			// demuxer. They are not compared, so keep the entry with zero.
+			if s.CodecType != "video" && s.CodecType != "audio" {
+				out = append(out, PacketCount{Index: s.Index, CodecType: s.CodecType})
+				continue
+			}
+			return nil, siphonerr.New(siphonerr.SourceCorrupt,
+				"stream %d has no packet count", s.Index)
+		}
 		n, err := strconv.ParseInt(s.Packets, 10, 64)
 		if err != nil {
 			return nil, siphonerr.Wrap(siphonerr.SourceCorrupt, err,
@@ -63,12 +78,71 @@ func CountPackets(ctx context.Context, path string) ([]PacketCount, error) {
 	return out, nil
 }
 
+// FrameCount is one stream's decoded frame count.
+type FrameCount struct {
+	Index     int    `json:"index"`
+	CodecType string `json:"codec_type"`
+	Frames    int64  `json:"-"`
+}
+
+// CountFrames runs ffprobe -count_frames and returns per-stream frame counts.
+// GIF verification uses it because the container often omits nb_frames.
+func CountFrames(ctx context.Context, path string) ([]FrameCount, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, siphonerr.Wrap(siphonerr.VerifyFailed, err, "cannot resolve %s", path)
+	}
+	cmd := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-count_frames",
+		"-show_entries", "stream=index,codec_type,nb_read_frames",
+		"-of", "json",
+		"-i", abs,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, siphonerr.Wrap(siphonerr.VerifyFailed, err,
+			"ffprobe -count_frames failed on %s: %s", path, tail(stderr.Bytes()))
+	}
+	var raw struct {
+		Streams []struct {
+			Index     int    `json:"index"`
+			CodecType string `json:"codec_type"`
+			Frames    string `json:"nb_read_frames"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		return nil, siphonerr.Wrap(siphonerr.VerifyFailed, err, "cannot parse frame counts")
+	}
+	out := make([]FrameCount, 0, len(raw.Streams))
+	for _, s := range raw.Streams {
+		n, err := strconv.ParseInt(s.Frames, 10, 64)
+		if err != nil {
+			return nil, siphonerr.Wrap(siphonerr.VerifyFailed, err,
+				"stream %d has an invalid frame count %q", s.Index, s.Frames)
+		}
+		out = append(out, FrameCount{Index: s.Index, CodecType: s.CodecType, Frames: n})
+	}
+	return out, nil
+}
+
 // DecodeCheck decodes the whole file with -xerror. This is the authoritative
 // full gate for remux and relocate output.
 func DecodeCheck(ctx context.Context, path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return siphonerr.Wrap(siphonerr.VerifyFailed, err, "cannot resolve %s", path)
+	}
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-nostdin", "-v", "error", "-xerror",
-		"-i", path,
+		"-i", abs,
 		"-f", "null", "-",
 	)
 	var stderr bytes.Buffer

@@ -1,0 +1,33 @@
+{
+  "name": "siphon-video-demos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Siphon — Remotion films, including the 22-second Dolphin-to-relocate workflow explainer.",
+  "scripts": {
+    "dev": "remotion studio",
+    "typecheck": "tsc --noEmit",
+    "audio": "python3 scripts/build_audio.py",
+    "grain": "python3 scripts/build_grain.py",
+    "assets": "npm run grain && npm run audio",
+    "still": "remotion still src/index.ts SiphonDemo out/preview/still.png --frame=300",
+    "preview": "remotion render src/index.ts SiphonDemo out/siphon-demo-preview.mp4 --scale=0.5 --crf=22 --concurrency=4",
+    "render": "remotion render src/index.ts SiphonDemo out/siphon-demo.mp4 --crf=16 --concurrency=4",
+    "workflow:still": "remotion still src/index.ts SiphonWorkflow out/preview/workflow.png --frame=360",
+    "workflow:preview": "remotion render src/index.ts SiphonWorkflow out/siphon-workflow-preview.mp4 --scale=0.5 --crf=22 --concurrency=4",
+    "workflow:render": "remotion render src/index.ts SiphonWorkflow out/siphon-workflow.mp4 --crf=16 --concurrency=4",
+    "workflow:build": "npm run typecheck && npm run workflow:render"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "@remotion/fonts": "4.0.539",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.539"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

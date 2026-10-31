@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ type Stream struct {
 	BitRate       string            `json:"bit_rate"`
 	TimeBase      string            `json:"time_base"`
 	Duration      string            `json:"duration"`
+	AvgFrameRate  string            `json:"avg_frame_rate"`
+	RFrameRate    string            `json:"r_frame_rate"`
+	NbFrames      string            `json:"nb_frames"`
+	PixFmt        string            `json:"pix_fmt"`
 	Extradata     string            `json:"extradata,omitempty"`
 	Tags          map[string]string `json:"tags,omitempty"`
 }
@@ -77,11 +82,15 @@ func ProbeFile(ctx context.Context, path string) (*Probe, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, siphonerr.Wrap(siphonerr.SourceCorrupt, err, "cannot resolve %s", path)
+	}
 	cmd := exec.CommandContext(ctx, "ffprobe",
 		"-v", "error",
 		"-show_format", "-show_streams", "-show_chapters",
 		"-of", "json",
-		"-i", path,
+		"-i", abs,
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -146,6 +155,45 @@ func (p *Probe) AudioStreams() []Stream {
 		}
 	}
 	return out
+}
+
+// FrameRate parses avg_frame_rate (falling back to r_frame_rate) for a video
+// stream. It returns zero when ffprobe did not report a usable rate.
+func (s Stream) FrameRate() float64 {
+	for _, v := range []string{s.AvgFrameRate, s.RFrameRate} {
+		if f := parseRatio(v); f > 0 {
+			return f
+		}
+	}
+	return 0
+}
+
+// FrameCount parses nb_frames when the demuxer exposes it.
+func (s Stream) FrameCount() int64 {
+	if s.NbFrames == "" || s.NbFrames == "N/A" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s.NbFrames, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func parseRatio(v string) float64 {
+	if v == "" || v == "0/0" {
+		return 0
+	}
+	if i := strings.IndexByte(v, '/'); i >= 0 {
+		num, err1 := strconv.ParseFloat(v[:i], 64)
+		den, err2 := strconv.ParseFloat(v[i+1:], 64)
+		if err1 != nil || err2 != nil || den == 0 {
+			return 0
+		}
+		return num / den
+	}
+	f, _ := strconv.ParseFloat(v, 64)
+	return f
 }
 
 // Summary is a short human description for inspect/doctor.

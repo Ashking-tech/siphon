@@ -47,15 +47,45 @@ fail_json() {
 	exit 2
 }
 
+fail_json_hint() {
+	printf '{"ok":false,"code":"%s","message":"%s","source_untouched":true,"hints":{"%s":true},"plan":{"mode":"safe","warnings":[],"has_alpha":false';
+	if [[ $1 == E_TRANSCODE_REQUIRED ]]; then
+		printf ',"transcode":{"video_codec":"h264","video_quality":23,"audio_codec":"aac","audio_bitrate":128}';
+	fi
+	printf '}}\n'
+	exit 2
+}
+
+ok_json() {
+	printf '{"ok":true,"plan":{"mode":"safe","warnings":[],"has_alpha":false},"source_untouched":true}\n'
+}
+
 case $cmd in
 inspect)
 	case $(basename -- "$src") in
-	refuse.mkv)
+	refuse.mkv|nohint.mkv)
 		fail_json E_CODEC_INCOMPATIBLE "mock codec refusal"
+		;;
+	dropincompat.mkv)
+		if has_flag --drop-incompatible "$@"; then
+			ok_json
+		else
+			fail_json_hint E_CODEC_INCOMPATIBLE "mock drop-incompatible refusal" drop_incompatible
+		fi
+		;;
+	transcode.webm)
+		if has_flag --transcode "$@"; then
+			printf '{"ok":true,"plan":{"mode":"safe","warnings":["video and audio are re-encoded"],"has_alpha":false,"transcode":{"video_codec":"h264","video_quality":23,"audio_codec":"aac","audio_bitrate":128}},"source_untouched":true}\n'
+		else
+			fail_json_hint E_TRANSCODE_REQUIRED "mock transcode required" transcode_required
+		fi
+		;;
+	noaudio.mp4)
+		fail_json_hint E_NO_AUDIO "mock source has no audio" no_audio
 		;;
 	meta.wav)
 		if has_flag --drop-metadata "$@"; then
-			printf '{"ok":true,"plan":{"mode":"safe","warnings":[],"has_alpha":false},"source_untouched":true}\n'
+			ok_json
 		else
 			fail_json E_METADATA_DROP "mock metadata refusal"
 		fi
@@ -69,7 +99,7 @@ inspect)
 		;;
 	target.png)
 		if has_flag --force "$@"; then
-			printf '{"ok":true,"plan":{"mode":"safe","warnings":[],"has_alpha":false},"source_untouched":true}\n'
+			ok_json
 		else
 			fail_json E_TARGET_EXISTS "mock target exists"
 		fi
@@ -209,7 +239,8 @@ count_log() {
 
 touch "$TMP/good.mkv" "$TMP/good2.mkv" "$TMP/good space.mkv" "$TMP/refuse.mkv" \
 	"$TMP/meta.wav" "$TMP/late-meta.mkv" "$TMP/alpha.png" "$TMP/target.png" \
-	"$TMP/reclaim.wav" "$TMP/fail.mkv"
+	"$TMP/reclaim.wav" "$TMP/fail.mkv" "$TMP/transcode.webm" \
+	"$TMP/dropincompat.mkv" "$TMP/nohint.mkv" "$TMP/noaudio.mp4"
 
 # 1. Batch success: inspect + convert each file, progressbar driven over DBus,
 #    one final aggregate popup.
@@ -294,6 +325,82 @@ expect_log 'Transparency will be flattened'
 expect_log 'siphon convert'
 printf 'ok - alpha prompt/retry\n'
 
+# 5b. E_TRANSCODE_REQUIRED is prompted and retried with --transcode.
+run_wrapper convert --to mp4 "$TMP/transcode.webm"
+expect_status 0
+[[ $(count_log 'siphon inspect') -eq 2 ]] || {
+	printf 'FAIL: expected transcode retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log 'Continue with the lossy re-encode?'
+expect_log 'Re-encode: h264 CRF 23'
+expect_log '--transcode'
+expect_log 'siphon convert'
+printf 'ok - transcode prompt/retry\n'
+
+# 5c. Cancelling the transcode prompt skips the file without converting.
+export KD_WARN_RC=1
+run_wrapper convert --to mp4 "$TMP/transcode.webm"
+unset KD_WARN_RC
+expect_status 0
+[[ $(count_log 'siphon inspect') -eq 1 ]] || {
+	printf 'FAIL: cancelled transcode should not retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+reject_log 'siphon convert'
+expect_log 'skipped 1'
+printf 'ok - transcode prompt cancel\n'
+
+# 5d. A drop_incompatible hint is prompted and retried.
+run_wrapper convert --to mov "$TMP/dropincompat.mkv"
+expect_status 0
+[[ $(count_log 'siphon inspect') -eq 2 ]] || {
+	printf 'FAIL: expected drop-incompatible retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log 'Continue and drop the incompatible tracks?'
+expect_log '--drop-incompatible'
+expect_log 'siphon convert'
+printf 'ok - drop-incompatible prompt/retry\n'
+
+# 5e. E_CODEC_INCOMPATIBLE without a hint is never auto-retried.
+run_wrapper convert --to mov "$TMP/nohint.mkv"
+expect_status 1
+[[ $(count_log 'siphon inspect') -eq 1 ]] || {
+	printf 'FAIL: unhinted codec refusal should not retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+reject_log 'siphon convert'
+expect_log 'E_CODEC_INCOMPATIBLE'
+printf 'ok - unhinted codec refusal\n'
+
+# 5f. An explicit --drop-incompatible avoids the prompt and retry.
+run_wrapper convert --to mov --drop-incompatible "$TMP/dropincompat.mkv"
+expect_status 0
+[[ $(count_log 'siphon inspect') -eq 1 ]] || {
+	printf 'FAIL: explicit --drop-incompatible should not retry\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log '--drop-incompatible'
+expect_log 'siphon convert'
+printf 'ok - explicit drop-incompatible\n'
+
+# 5g. Audio selection failures are per-file; the batch continues.
+run_wrapper convert --to mp3 "$TMP/noaudio.mp4" "$TMP/good.mkv"
+expect_status 1
+[[ $(count_log 'siphon convert') -eq 1 ]] || {
+	printf 'FAIL: batch should convert only the file with audio\n' >&2
+	cat "$LOG" >&2
+	exit 1
+}
+expect_log 'E_NO_AUDIO'
+printf 'ok - no-audio failure continues batch\n'
+
 # 6. Cancelling the reclaim warning skips the file without converting.
 export KD_WARN_RC=1
 run_wrapper convert --to mp3 --mode reclaim "$TMP/reclaim.wav"
@@ -341,8 +448,8 @@ INSTALL="$TMP/install"
 	exit 1
 }
 for dir in "$INSTALL/share/kio/servicemenus" "$INSTALL/share/kservices5/ServiceMenus"; do
-	[[ $(find "$dir" -maxdepth 1 -name 'siphon-*.desktop' | wc -l) -eq 8 ]] || {
-		printf 'FAIL: expected 8 menus in %s\n' "$dir" >&2
+	[[ $(find "$dir" -maxdepth 1 -name 'siphon-*.desktop' | wc -l) -eq 19 ]] || {
+		printf 'FAIL: expected 19 menus in %s\n' "$dir" >&2
 		find "$dir" -maxdepth 1 -type f -printf '%f\n' >&2
 		exit 1
 	}
@@ -359,6 +466,25 @@ for dir in "$INSTALL/share/kio/servicemenus" "$INSTALL/share/kservices5/ServiceM
 	[[ -x $dir/siphon-mkv-to-mp4.desktop ]] || {
 		printf 'FAIL: installed menu is not executable (KDE will deny it)\n' >&2
 		stat -c '%A %n' "$dir/siphon-mkv-to-mp4.desktop" >&2
+		exit 1
+	}
+	grep -Fq -- '--transcode' "$dir/siphon-webm-to-mp4.desktop" || {
+		printf 'FAIL: WebM → MP4 menu does not prefer --transcode\n' >&2
+		exit 1
+	}
+	grep -Fq -- '--bg white' "$dir/siphon-gif-to-mp4.desktop" || {
+		printf 'FAIL: GIF → MP4 menu does not flatten on white\n' >&2
+		exit 1
+	}
+	grep -Fq 'Name=Convert to MP4 (white background)' \
+		"$dir/siphon-gif-to-mp4.desktop" || {
+		printf 'FAIL: GIF → MP4 action does not name its background\n' >&2
+		exit 1
+	}
+	grep -Eq '^MimeType=.*video/x-matroska.*video/webm' \
+		"$dir/siphon-video-to-mp3.desktop" || {
+		printf 'FAIL: video → MP3 menu is not grouped across containers\n' >&2
+		grep '^MimeType=' "$dir/siphon-video-to-mp3.desktop" >&2
 		exit 1
 	}
 done

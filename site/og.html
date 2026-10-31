@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>Siphon — social card</title>
+<style>
+@font-face { font-family: "Inter Display"; src: url("fonts/InterDisplay-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Inter Display"; src: url("fonts/InterDisplay-Bold.woff2") format("woff2"); font-weight: 700; }
+@font-face { font-family: "Inter Display"; src: url("fonts/InterDisplay-Black.woff2") format("woff2"); font-weight: 900; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Hack"; src: url("fonts/Hack-Regular.woff2") format("woff2"); font-weight: 400; }
+* { box-sizing: border-box; }
+html, body { width: 1200px; height: 630px; margin: 0; overflow: hidden; }
+body {
+  background: #080909;
+  color: #f3f1e8;
+  font-family: "Inter", sans-serif;
+  position: relative;
+}
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(760px 420px at 12% -8%, rgba(201, 242, 77, 0.14), transparent 70%),
+    radial-gradient(500px 300px at 96% 108%, rgba(201, 242, 77, 0.06), transparent 70%);
+}
+.grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(243, 241, 232, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(243, 241, 232, 0.045) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(900px 520px at 60% 40%, #000 20%, transparent 78%);
+}
+.page { position: relative; padding: 56px 64px; height: 100%; display: flex; flex-direction: column; }
+.top { display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 14px; font-family: "Inter Display"; font-weight: 800; font-size: 30px; letter-spacing: -0.03em; }
+.mark { width: 48px; height: 48px; }
+.kicker { font-family: "Hack", monospace; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: #c9f24d; }
+h1 { margin: 64px 0 20px; font-family: "Inter Display"; font-weight: 900; font-size: 92px; line-height: 0.94; letter-spacing: -0.055em; }
+h1 em { font-style: normal; color: #c9f24d; }
+.sub { margin: 0; max-width: 700px; font-size: 24px; line-height: 1.45; color: rgba(243, 241, 232, 0.72); }
+.bottom { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; }
+.bars { width: 560px; }
+.bar-row { margin-top: 14px; }
+.bar-label { display: flex; justify-content: space-between; font-family: "Hack", monospace; font-size: 12px; color: rgba(243, 241, 232, 0.5); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+.bar { height: 26px; display: flex; border: 1px solid rgba(243, 241, 232, 0.24); border-radius: 3px; overflow: hidden; }
+.src { background: #7d8177; opacity: 0.55; }
+.copy { background: repeating-linear-gradient(135deg, rgba(243, 241, 232, 0.24) 0 6px, transparent 6px 12px); border-left: 1px solid rgba(243, 241, 232, 0.24); }
+.out { background: #c9f24d; }
+.w50 { width: 50%; }
+.w94 { width: 94%; }
+.w6 { width: 6%; }
+.url { font-family: "Hack", monospace; font-size: 15px; color: rgba(243, 241, 232, 0.5); text-align: right; }
+.url strong { display: block; color: #c9f24d; font-weight: 400; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="grid"></div>
+<div class="page">
+  <div class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#c9f24d"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#080909"/></svg>
+      <span>Siphon</span>
+    </div>
+    <div class="kicker">Linux · in-place by design</div>
+  </div>
+  <h1>Convert in place.<br><em>No second copy.</em></h1>
+  <p class="sub">A 60 GB film becomes an MP4 with 340 MB free. The output is written and verified before the source is consumed.</p>
+  <div class="bottom">
+    <div class="bars">
+      <div class="bar-row">
+        <div class="bar-label"><span>A normal converter</span><span>2×</span></div>
+        <div class="bar"><span class="src w50"></span><span class="copy w50"></span></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Siphon</span><span>1× + one segment</span></div>
+        <div class="bar"><span class="src w94"></span><span class="out w6"></span></div>
+      </div>
+    </div>
+    <div class="url"><strong>siphon.example</strong>convert media in place</div>
+  </div>
+</div>
+</body>
+</html>

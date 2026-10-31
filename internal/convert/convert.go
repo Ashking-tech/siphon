@@ -23,7 +23,7 @@ func Inspect(ctx context.Context, job *core.Job) (*core.Plan, error) {
 func Run(ctx context.Context, job *core.Job, sink progress.Sink) (*core.Result, error) {
 	plan, err := preflight.Run(ctx, job)
 	if err != nil {
-		return resultForErr(err, nil), err
+		return resultForErr(err, plan), err
 	}
 
 	if sink != nil {
@@ -58,6 +58,7 @@ func resultForErr(err error, plan *core.Plan) *core.Result {
 		Code:            string(siphonerr.CodeOf(err)),
 		Message:         siphonerr.MessageOf(err),
 		Plan:            plan,
+		Hints:           siphonerr.HintsOf(err),
 		SourceUntouched: siphonerr.SourceUntouched(err),
 	}
 }

@@ -6,6 +6,9 @@ package engines
 import (
 	"siphon/internal/engine"
 	"siphon/internal/engine/atomiccopy"
+	"siphon/internal/engine/mediaengine"
+	"siphon/internal/engine/pdfrender"
+	"siphon/internal/engine/pdfwrite"
 	"siphon/internal/engine/relocate"
 	"siphon/internal/engine/remux"
 	"siphon/internal/engine/sliding"
@@ -17,4 +20,7 @@ func init() {
 	engine.Register(formats.EngineSliding, sliding.New())
 	engine.Register(formats.EngineRemux, remux.New())
 	engine.Register(formats.EngineRelocate, relocate.New())
+	engine.Register(formats.EnginePDFRender, pdfrender.New())
+	engine.Register(formats.EnginePDFWrite, pdfwrite.New())
+	engine.Register(formats.EngineMedia, mediaengine.New())
 }

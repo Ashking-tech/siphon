@@ -1,0 +1,48 @@
+# Siphon
+
+> Siphon is a media converter for Linux that converts video, audio, images and PDFs in place. It writes and verifies the output before consuming the source, so a 60 GB film can become an MP4 with a few hundred megabytes free.
+
+Siphon is a single-binary CLI with an optional Dolphin ServiceMenu. It orchestrates `ffmpeg`, `ffprobe`, `lame`, `cwebp`, `dwebp`, `pdfinfo` and `pdftoppm`; it does not implement media codecs itself. It has no networking code, no telemetry and no accounts.
+
+## The product
+
+- Video default: MKV → MP4 in `relocate` mode, tail-first, one keyframe-aligned segment at a time. Peak extra space is one segment (typically 30–600 MB), not one film.
+- Audio default: WAV → MP3 in `safe` mode (about 15% extra space). `reclaim` mode writes into the source head and needs about 1×, but is opt-in and can leave a ≤ 26 ms splice on a crash.
+- Images, PDFs and the in-progress v0.2 pairs: `safe` only; peak space is source + output.
+- Refusal is a first-class outcome: `siphon inspect` prints the plan and changes nothing.
+- A crash leaves a recoverable state: destructive modes journal the plan. `siphon recover <file>` resumes exactly for video, splices for audio reclaim, and cleans up for safe modes.
+- No silent quality loss: remux by default, metadata refusals rather than silent drops, explicit flags for lossy decisions.
+
+## Formats
+
+- MKV → MP4 (`relocate` default, `safe` for classic MP4)
+- WAV → MP3 (`safe` default, `reclaim` opt-in)
+- PNG ↔ JPG, PNG ↔ WebP, JPG ↔ WebP
+- In progress for v0.2: PDF → PNG/JPG (one page only), PNG/JPG → PDF, MP4/MOV → MKV, MKV → MOV, WebM ↔ MP4, GIF ↔ MP4, video → MP3
+
+## Space table
+
+| Your MKV | Resolution / bitrate | Segment | Free needed | Total disk used |
+|---|---|---|---|---|
+| 4 GB | 1080p, 10 Mbps | 60 s | ≈ 75 MB | ≈ 4.1 GB |
+| 20 GB | 1080p, 20 Mbps | 60 s | ≈ 150 MB | ≈ 20.2 GB |
+| 60 GB | 4K, 45 Mbps | 60 s | ≈ 340 MB | ≈ 60.3 GB |
+| 60 GB | 4K, 45 Mbps | 15 s | ≈ 85 MB | ≈ 60.1 GB |
+| 200 GB | 4K, 80 Mbps | 60 s | ≈ 600 MB | ≈ 200.6 GB |
+
+Formula: `free = segment_duration × total_bitrate / 8 + 16 MB`.
+
+## Limits
+
+- Linux only. No Windows or macOS build.
+- Video relocate is remux-only: one video plus one optional audio track, sized clusters, no transcoding. Classic MP4 requires `--mode safe` and 2× space.
+- Relocate needs a filesystem with sparse files: ext4, btrfs, XFS. FAT32, exFAT and NTFS-3G are refused.
+- No first-class GUI yet; the Dolphin ServiceMenu is the graphical surface.
+- Packaging is planned; build from source today.
+
+## Links
+
+- Source: https://github.com/OWNER/siphon
+- Specification: https://github.com/OWNER/siphon/blob/main/spec.md
+- Issues: https://github.com/OWNER/siphon/issues
+- Site: https://siphon.example/

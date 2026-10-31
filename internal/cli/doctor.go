@@ -14,15 +14,16 @@ import (
 )
 
 type doctorReport struct {
-	OK          bool         `json:"ok"`
-	Tools       []media.Tool `json:"tools"`
-	FreeBytes   int64        `json:"free_bytes"`
-	Free        string       `json:"free"`
-	Sparse      bool         `json:"sparse_supported"`
-	SparseError string       `json:"sparse_error,omitempty"`
-	Root        bool         `json:"root"`
-	SELinux     string       `json:"selinux"`
-	Engines     []string     `json:"engines"`
+	OK          bool            `json:"ok"`
+	Tools       []media.Tool    `json:"tools"`
+	FreeBytes   int64           `json:"free_bytes"`
+	Free        string          `json:"free"`
+	Sparse      bool            `json:"sparse_supported"`
+	SparseError string          `json:"sparse_error,omitempty"`
+	Root        bool            `json:"root"`
+	SELinux     string          `json:"selinux"`
+	Engines     []string        `json:"engines"`
+	Missing     []media.Feature `json:"ffmpeg_missing_features,omitempty"`
 }
 
 func newDoctorCmd() *cobra.Command {
@@ -59,6 +60,14 @@ func newDoctorCmd() *cobra.Command {
 			if sparseErr != nil {
 				rep.SparseError = sparseErr.Error()
 			}
+			// Feature discovery only makes sense when ffmpeg is present; the
+			// missing tool line already carries its package hint.
+			for _, t := range tools {
+				if t.Name == "ffmpeg" && t.Path != "" {
+					rep.Missing = media.InspectFeatures(cmd.Context())
+					break
+				}
+			}
 
 			if globals.JSON {
 				emitJSON(rep)
@@ -78,9 +87,15 @@ func newDoctorCmd() *cobra.Command {
 			for _, t := range rep.Tools {
 				if t.Path == "" {
 					fmt.Printf("    %-8s missing\n", t.Name)
+					if t.Hint != "" {
+						fmt.Printf("             %s\n", t.Hint)
+					}
 					continue
 				}
 				fmt.Printf("    %-8s %-10s %s\n", t.Name, t.Version, t.Path)
+			}
+			if len(rep.Missing) > 0 {
+				fmt.Printf("  ffmpeg features missing: %s\n", media.FeatureSummary(rep.Missing))
 			}
 			return nil
 		},

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/mp4;
+Actions=convertToWebm;
+X-KDE-Submenu=Siphon
+Icon=video-x-generic
+
+[Desktop Action convertToWebm]
+Name=Convert to WebM
+Icon=video-x-generic
+Exec=siphon-gui-kde convert --to webm %F

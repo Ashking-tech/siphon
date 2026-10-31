@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/mp4;video/quicktime;
+Actions=convertToMkv;
+X-KDE-Submenu=Siphon
+Icon=video-x-generic
+
+[Desktop Action convertToMkv]
+Name=Convert to MKV
+Icon=video-x-generic
+Exec=siphon-gui-kde convert --to mkv %F

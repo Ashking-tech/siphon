@@ -20,21 +20,51 @@ type Tool struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Version string `json:"version"`
+	Hint    string `json:"hint,omitempty"`
+}
+
+// PackageHint returns the distro package hint shown when a tool is missing.
+func PackageHint(name string) string {
+	switch name {
+	case "pdfinfo", "pdftoppm":
+		return "Fedora: sudo dnf install poppler-utils; Debian/Ubuntu: sudo apt install poppler-utils; Arch: sudo pacman -S poppler"
+	case "cwebp", "dwebp":
+		return "Fedora: sudo dnf install libwebp-tools; Debian/Ubuntu: sudo apt install webp; Arch: sudo pacman -S libwebp"
+	case "ffmpeg", "ffprobe":
+		return "Fedora: sudo dnf install ffmpeg; Debian/Ubuntu: sudo apt install ffmpeg; Arch: sudo pacman -S ffmpeg"
+	case "lame":
+		return "Fedora: sudo dnf install lame; Debian/Ubuntu: sudo apt install lame; Arch: sudo pacman -S lame"
+	}
+	return ""
 }
 
 var minimums = map[string]string{
-	"ffmpeg":  "5.0",
-	"ffprobe": "5.0",
-	"lame":    "3.100",
-	"cwebp":   "1.0",
-	"dwebp":   "1.0",
+	"ffmpeg":   "5.0",
+	"ffprobe":  "5.0",
+	"lame":     "3.100",
+	"cwebp":    "1.0",
+	"dwebp":    "1.0",
+	"pdfinfo":  "22.01",
+	"pdftoppm": "22.01",
 }
 
 // RequiredFor returns the external tools a pair needs.
 func RequiredFor(source, target formats.Format) []string {
+	switch {
+	case formats.IsPDFImagePair(formats.Pair{Source: source, Target: target}):
+		return []string{"pdfinfo", "pdftoppm"}
+	case formats.IsImagePDFPair(formats.Pair{Source: source, Target: target}):
+		// The image → PDF writer is internal Go; no external tool is needed.
+		return nil
+	case source == formats.PDF:
+		return []string{"pdfinfo"}
+	}
+
 	tools := []string{"ffmpeg", "ffprobe"}
 	if source == formats.WAV || target == formats.MP3 {
-		tools = append(tools, "lame")
+		if source == formats.WAV {
+			tools = append(tools, "lame")
+		}
 	}
 	if target == formats.WEBP {
 		tools = append(tools, "cwebp")
@@ -74,6 +104,7 @@ func Inspect(ctx context.Context, names []string) []Tool {
 		t := Tool{Name: name}
 		path, err := exec.LookPath(name)
 		if err != nil {
+			t.Hint = PackageHint(name)
 			out = append(out, t)
 			continue
 		}
@@ -85,7 +116,9 @@ func Inspect(ctx context.Context, names []string) []Tool {
 }
 
 // AllTools is the doctor set.
-func AllTools() []string { return []string{"ffmpeg", "ffprobe", "lame", "cwebp", "dwebp"} }
+func AllTools() []string {
+	return []string{"ffmpeg", "ffprobe", "lame", "cwebp", "dwebp", "pdfinfo", "pdftoppm"}
+}
 
 func toolVersion(ctx context.Context, name, path string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -174,7 +207,7 @@ func parseParts(v string) ([]int, bool) {
 // VersionString is a helper for messages.
 func VersionString(tools map[string]string) string {
 	var parts []string
-	for _, name := range []string{"ffmpeg", "ffprobe", "lame", "cwebp", "dwebp"} {
+	for _, name := range []string{"ffmpeg", "ffprobe", "lame", "cwebp", "dwebp", "pdfinfo", "pdftoppm"} {
 		if v, ok := tools[name]; ok {
 			parts = append(parts, fmt.Sprintf("%s %s", name, v))
 		}

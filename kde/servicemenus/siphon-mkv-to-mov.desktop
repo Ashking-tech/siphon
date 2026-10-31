@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/x-matroska;
+Actions=convertToMov;
+X-KDE-Submenu=Siphon
+Icon=video-x-generic
+
+[Desktop Action convertToMov]
+Name=Convert to MOV
+Icon=video-x-generic
+Exec=siphon-gui-kde convert --to mov %F

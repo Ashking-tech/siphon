@@ -27,9 +27,18 @@ type Job struct {
 	DropMetadata     bool
 	AllowHardlinks   bool
 	AllowRoot        bool
+	Transcode        bool
 	Background       string
 	Quality          int
 	Bitrate          int
+	DPI              int
+	MaxPixels        int64
+	VideoQuality     int
+	VideoQualitySet  bool
+	AudioBitrate     int
+	FPS              float64
+	Width            int
+	AudioTrack       int
 	SegmentDuration  time.Duration
 	SegmentTolerance time.Duration
 	Verify           string
@@ -38,6 +47,11 @@ type Job struct {
 	SkipProbe        bool
 	Timeout          time.Duration
 	JSON             bool
+
+	// Flags records which command-line flags were explicitly supplied. The
+	// pre-flight gate uses it to reject flags outside their applicable pair
+	// instead of silently ignoring them (spec §5.1).
+	Flags map[string]bool
 
 	// Tools records the versions verified at pre-flight, for the journal.
 	Tools map[string]string
@@ -83,6 +97,86 @@ type Plan struct {
 	AudioSampleRate int      `json:"audio_sample_rate,omitempty"`
 	AudioDurationMS int64    `json:"audio_duration_ms,omitempty"`
 	AudioTags       []string `json:"audio_tags,omitempty"`
+
+	// v0.2 document/image plan groups. A real plan includes only the groups
+	// relevant to its source/target pair (spec §5.3).
+	PDF       *PDFPlan       `json:"pdf,omitempty"`
+	Render    *RenderPlan    `json:"render,omitempty"`
+	Page      *PagePlan      `json:"page,omitempty"`
+	Media     *MediaPlan     `json:"media,omitempty"`
+	Transcode *TranscodePlan `json:"transcode,omitempty"`
+	Audio     *AudioPlan     `json:"audio,omitempty"`
+	GIF       *GIFPlan       `json:"gif,omitempty"`
+
+	// Refusal and Hints are populated when this plan accompanies a refusal,
+	// so `inspect --json` and the KDE wrapper can show the proposed work and
+	// the boolean retry hints without parsing prose (spec §5.3).
+	Refusal string          `json:"refusal,omitempty"`
+	Hints   map[string]bool `json:"hints,omitempty"`
+}
+
+// PDFPlan is the parsed structural view of a PDF source.
+type PDFPlan struct {
+	Pages        int     `json:"pages"`
+	PageWidthPT  float64 `json:"page_width_pt"`
+	PageHeightPT float64 `json:"page_height_pt"`
+	Rotation     int     `json:"rotation"`
+	Encrypted    bool    `json:"encrypted"`
+}
+
+// RenderPlan describes PDF → image rasterization.
+type RenderPlan struct {
+	DPI       int   `json:"dpi"`
+	WidthPX   int   `json:"width_px"`
+	HeightPX  int   `json:"height_px"`
+	MaxPixels int64 `json:"max_pixels"`
+}
+
+// PagePlan describes image → PDF page geometry.
+type PagePlan struct {
+	DPI      float64 `json:"dpi"`
+	WidthPT  float64 `json:"width_pt"`
+	HeightPT float64 `json:"height_pt"`
+}
+
+// MediaStream is one source stream and its planned fate in a media pair.
+type MediaStream struct {
+	Type   string `json:"type"`
+	Codec  string `json:"codec"`
+	Action string `json:"action"`
+}
+
+// MediaPlan is the explicit stream map for container remux/transcode pairs.
+type MediaPlan struct {
+	SourceContainer string        `json:"source_container"`
+	TargetContainer string        `json:"target_container"`
+	Remux           bool          `json:"remux"`
+	Transcode       bool          `json:"transcode"`
+	Streams         []MediaStream `json:"streams"`
+}
+
+// TranscodePlan records the proposed encoder settings.
+type TranscodePlan struct {
+	VideoCodec   string `json:"video_codec,omitempty"`
+	VideoQuality int    `json:"video_quality"`
+	AudioCodec   string `json:"audio_codec,omitempty"`
+	AudioBitrate int    `json:"audio_bitrate,omitempty"`
+}
+
+// AudioPlan records video → MP3 audio selection.
+type AudioPlan struct {
+	Track       int    `json:"track"`
+	SourceCodec string `json:"source_codec"`
+	TargetCodec string `json:"target_codec"`
+	Bitrate     int    `json:"bitrate,omitempty"`
+	VBR         bool   `json:"vbr"`
+}
+
+// GIFPlan records GIF output parameters.
+type GIFPlan struct {
+	Width int     `json:"width"`
+	FPS   float64 `json:"fps"`
+	Loop  int     `json:"loop"`
 }
 
 // Segment is one keyframe-aligned byte range in a relocate plan.
@@ -98,11 +192,12 @@ type Segment struct {
 
 // Result is the machine-readable outcome of a command.
 type Result struct {
-	OK              bool   `json:"ok"`
-	Code            string `json:"code,omitempty"`
-	Message         string `json:"message,omitempty"`
-	Plan            *Plan  `json:"plan,omitempty"`
-	SourceUntouched bool   `json:"source_untouched"`
+	OK              bool            `json:"ok"`
+	Code            string          `json:"code,omitempty"`
+	Message         string          `json:"message,omitempty"`
+	Plan            *Plan           `json:"plan,omitempty"`
+	Hints           map[string]bool `json:"hints,omitempty"`
+	SourceUntouched bool            `json:"source_untouched"`
 }
 
 // HumanBytes renders a byte count for inspect output. It always states

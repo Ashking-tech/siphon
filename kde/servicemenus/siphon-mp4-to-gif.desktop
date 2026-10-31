@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/mp4;
+Actions=convertToGif;
+X-KDE-Submenu=Siphon
+Icon=image-x-generic
+
+[Desktop Action convertToGif]
+Name=Convert to GIF
+Icon=image-x-generic
+Exec=siphon-gui-kde convert --to gif %F

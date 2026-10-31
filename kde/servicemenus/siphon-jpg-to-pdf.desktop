@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=image/jpeg;
+Actions=convertToPdf;
+X-KDE-Submenu=Siphon
+Icon=image-x-generic
+
+[Desktop Action convertToPdf]
+Name=Convert to PDF
+Icon=application-pdf
+Exec=siphon-gui-kde convert --to pdf %F

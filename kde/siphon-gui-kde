@@ -18,9 +18,16 @@ Usage: siphon-gui-kde convert --to <fmt> [options] <file>...
 Options:
   --to <fmt>                 Target format (required)
   --mode auto|safe|relocate|reclaim
-  --bg <colour>              Background for alpha stripping
-  --quality <1-100>          Image encoder quality
+  --bg <colour>              Background for alpha stripping or GIF flattening
+  --quality <1-100>          Image/JPEG encoder quality
   --bitrate <kbps>           WAV CBR bitrate
+  --dpi <n>                  PDF render resolution
+  --max-pixels <n>           Maximum rendered PDF pixels
+  --video-quality <crf>      Video CRF for transcode pairs
+  --audio-bitrate <kbps>     Audio bitrate for transcode/extraction
+  --fps <n>                  GIF output frame rate
+  --width <px>               Maximum GIF output width
+  --audio-track <n>          Zero-based audio track for video → MP3
   --segment-duration <dur>   Relocate segment window
   --segment-tolerance <dur>  Keyframe snap tolerance
   --verify structural|sampled|full
@@ -28,7 +35,8 @@ Options:
   --probe-segments <n>
   --force                    Replace an existing target
   --drop-metadata            Permit metadata loss
-  --drop-incompatible        Drop tracks MP4 cannot carry
+  --drop-incompatible        Drop tracks the target cannot carry
+  --transcode                Permit re-encoding for WebM ↔ MP4
   --transcode-audio          Encode incompatible audio to AAC (safe only)
   --allow-nonstandard        Permit VP9/Opus/FLAC in MP4
   --skip-probe               Skip the relocate stitch probe (unsafe)
@@ -197,6 +205,8 @@ json_query() {
 		mode) "$JQ" -r '.plan.mode // ""' "$file" 2>/dev/null || true ;;
 		crash_cost) "$JQ" -r '.plan.crash_cost // ""' "$file" 2>/dev/null || true ;;
 		warnings) "$JQ" -r '.plan.warnings[]? // empty' "$file" 2>/dev/null || true ;;
+		hint:*) "$JQ" -r --arg k "${query#hint:}" \
+			'if (.hints[$k] // false) then "true" else "false" end' "$file" 2>/dev/null || true ;;
 		has_alpha) "$JQ" -r 'if .plan.has_alpha then "true" else "false" end' "$file" 2>/dev/null || true ;;
 		dropped) "$JQ" -r '.plan.dropped[]? // empty' "$file" 2>/dev/null || true ;;
 		metadata) "$JQ" -r '.plan.metadata[]? // empty' "$file" 2>/dev/null || true ;;
@@ -245,6 +255,10 @@ elif query == "crash_cost":
     emit(plan.get("crash_cost", ""))
 elif query == "warnings":
     emit(plan.get("warnings") or [])
+elif query.startswith("hint:"):
+    key = query.split(":", 1)[1]
+    hints = data.get("hints") or {}
+    print("true" if hints.get(key) else "false")
 elif query == "has_alpha":
     print("true" if plan.get("has_alpha") else "false")
 elif query == "dropped":
@@ -411,8 +425,32 @@ add_common() {
 	convert_flags+=("$@")
 }
 
+# transcode_prompt_text appends the proposed encoder settings from the plan.
+transcode_prompt_text() {
+	local jsonfile=$1 text=$2
+	local codec quality acodec abitrate
+	if [[ -n $JQ ]]; then
+		codec="$("$JQ" -r '.plan.transcode.video_codec // ""' "$jsonfile" 2>/dev/null || true)"
+		quality="$("$JQ" -r '.plan.transcode.video_quality // ""' "$jsonfile" 2>/dev/null || true)"
+		acodec="$("$JQ" -r '.plan.transcode.audio_codec // ""' "$jsonfile" 2>/dev/null || true)"
+		abitrate="$("$JQ" -r '.plan.transcode.audio_bitrate // ""' "$jsonfile" 2>/dev/null || true)"
+	else
+		codec="$("$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); t=(d.get("plan") or {}).get("transcode") or {}; print(t.get("video_codec",""))' "$jsonfile" 2>/dev/null || true)"
+		quality="$("$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); t=(d.get("plan") or {}).get("transcode") or {}; print(t.get("video_quality",""))' "$jsonfile" 2>/dev/null || true)"
+		acodec="$("$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); t=(d.get("plan") or {}).get("transcode") or {}; print(t.get("audio_codec",""))' "$jsonfile" 2>/dev/null || true)"
+		abitrate="$("$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); t=(d.get("plan") or {}).get("transcode") or {}; print(t.get("audio_bitrate",""))' "$jsonfile" 2>/dev/null || true)"
+	fi
+	if [[ -n $codec ]]; then
+		text+=$'\n\n'"Re-encode: $codec CRF $quality"
+	fi
+	if [[ -n $acodec ]]; then
+		text+=", $acodec ${abitrate} kbps"
+	fi
+	printf '%s' "$text"
+}
+
 convert_file() {
-	local file=$1 fifo result rc code msg prompt
+	local file=$1 fifo result rc code msg prompt hint
 	fifo="$TMPDIR_RUN/progress.fifo"
 	result="$TMPDIR_RUN/result.json"
 	rm -f -- "$fifo" "$result"
@@ -446,7 +484,7 @@ convert_file() {
 	fi
 
 	if [[ $rc -eq 130 ]]; then
-		LAST_ERROR="$file: E_INTERRUPTED: interrupted; run 'siphon recover \"$file\"'"
+		LAST_ERROR="$file: E_INTERRUPTED: interrupted; source untouched, a temp file is reaped on the next run"
 		return 130
 	fi
 
@@ -466,6 +504,35 @@ Continue and drop this metadata?"; then
 		return $?
 	fi
 
+	if [[ $code == E_TRANSCODE_REQUIRED && $transcode_set -eq 0 ]]; then
+		prompt=${msg:-This conversion requires re-encoding.}
+		prompt="$(transcode_prompt_text "$result" "$prompt")"
+		if ! ui_warning "$prompt
+
+Continue with the lossy re-encode?"; then
+			LAST_ERROR="$file: $code: cancelled at transcode prompt"
+			return 2
+		fi
+		transcode_set=1
+		add_common --transcode
+		convert_file "$file"
+		return $?
+	fi
+
+	hint="$(json_query "$result" hint:drop_incompatible)"
+	if [[ $code == E_CODEC_INCOMPATIBLE && $hint == true && $drop_incompatible_set -eq 0 ]]; then
+		if ! ui_warning "${msg:-Some tracks cannot be carried.}
+
+Continue and drop the incompatible tracks?"; then
+			LAST_ERROR="$file: $code: cancelled at drop-incompatible prompt"
+			return 2
+		fi
+		drop_incompatible_set=1
+		add_common --drop-incompatible
+		convert_file "$file"
+		return $?
+	fi
+
 	if [[ $rc -eq 0 ]]; then
 		LAST_ERROR="$file: ${code:-E_INTERNAL}: ${msg:-conversion reported failure}"
 	else
@@ -476,9 +543,9 @@ Continue and drop this metadata?"; then
 
 handle_file() {
 	local file=$1 jsonfile="$TMPDIR_RUN/inspect.json"
-	local out rc code msg attempt warn
+	local out rc code msg attempt warn hint
 
-	for attempt in 1 2 3; do
+	for attempt in 1 2 3 4 5 6; do
 		if out=$("$SIPHON" inspect "$file" --to "$to" "${inspect_flags[@]}" --json 2>/dev/null); then
 			rc=0
 		else
@@ -499,7 +566,7 @@ handle_file() {
 				return 1
 			fi
 			if ! bg="$(ui_inputbox \
-				"$file has transparency and JPEG cannot carry it. Background colour (name, #rrggbb, rgb(...), or transparent):" \
+				"$file has transparency and the target cannot carry it. Background colour (name, #rrggbb, rgb(...), or transparent):" \
 				white)"; then
 				LAST_ERROR="$file: $code: cancelled at background prompt"
 				return 2
@@ -522,6 +589,44 @@ Continue and drop this metadata?"; then
 			fi
 			drop_metadata_set=1
 			add_common --drop-metadata
+			continue
+			;;
+		E_TRANSCODE_REQUIRED)
+			hint="$(json_query "$jsonfile" hint:transcode_required)"
+			if ((transcode_set == 1)) || [[ $hint != true ]]; then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			local prompt
+			prompt="$(transcode_prompt_text "$jsonfile" "${msg:-This conversion requires re-encoding.}")"
+			if ! ui_warning "$prompt
+
+Continue with the lossy re-encode?"; then
+				LAST_ERROR="$file: $code: cancelled at transcode prompt"
+				return 2
+			fi
+			transcode_set=1
+			add_common --transcode
+			continue
+			;;
+		E_CODEC_INCOMPATIBLE)
+			hint="$(json_query "$jsonfile" hint:drop_incompatible)"
+			if [[ $hint != true ]]; then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			if ((drop_incompatible_set == 1)); then
+				LAST_ERROR="$file: $code: $msg"
+				return 1
+			fi
+			if ! ui_warning "${msg:-Some tracks cannot be carried.}
+
+Continue and drop the incompatible tracks?"; then
+				LAST_ERROR="$file: $code: cancelled at drop-incompatible prompt"
+				return 2
+			fi
+			drop_incompatible_set=1
+			add_common --drop-incompatible
 			continue
 			;;
 		E_TARGET_EXISTS)
@@ -592,6 +697,8 @@ to=""
 bg=""
 bg_set=0
 drop_metadata_set=0
+drop_incompatible_set=0
+transcode_set=0
 force_set=0
 declare -a inspect_flags=()
 declare -a convert_flags=()
@@ -603,7 +710,9 @@ while [[ $# -gt 0 ]]; do
 		to=$2
 		shift 2
 		;;
-	--mode | --quality | --bitrate | --segment-duration | --segment-tolerance | --verify | --verify-frames | --probe-segments | --timeout)
+	--mode | --quality | --bitrate | --dpi | --max-pixels | --video-quality | \
+		--audio-bitrate | --fps | --width | --audio-track | --segment-duration | \
+		--segment-tolerance | --verify | --verify-frames | --probe-segments | --timeout)
 		[[ $# -ge 2 ]] || die "$1 requires a value"
 		add_common "$1" "$2"
 		shift 2
@@ -625,7 +734,17 @@ while [[ $# -gt 0 ]]; do
 		add_common --drop-metadata
 		shift
 		;;
-	--drop-incompatible | --transcode-audio | --allow-nonstandard | --skip-probe | --allow-root | --allow-hardlinks)
+	--drop-incompatible)
+		drop_incompatible_set=1
+		add_common --drop-incompatible
+		shift
+		;;
+	--transcode)
+		transcode_set=1
+		add_common --transcode
+		shift
+		;;
+	--transcode-audio | --allow-nonstandard | --skip-probe | --allow-root | --allow-hardlinks)
 		add_common "$1"
 		shift
 		;;

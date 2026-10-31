@@ -1,0 +1,31 @@
+{
+  "name": "siphon-launch-film",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Siphon — a 35-second typography-led product launch film, built with Remotion.",
+  "scripts": {
+    "dev": "remotion studio",
+    "typecheck": "tsc --noEmit",
+    "audio": "python3 scripts/build_audio.py",
+    "grain": "python3 scripts/build_grain.py",
+    "assets": "npm run grain && npm run audio",
+    "still": "remotion still src/index.ts SiphonLaunch out/preview/still.png --frame=640",
+    "storyboard": "node scripts/render-stills.mjs",
+    "preview": "remotion render src/index.ts SiphonLaunch out/siphon-launch-preview.mp4 --scale=0.5 --crf=22 --concurrency=4",
+    "render": "remotion render src/index.ts SiphonLaunch out/siphon-launch.mp4 --crf=16 --concurrency=4",
+    "build": "npm run typecheck && npm run render"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "@remotion/fonts": "4.0.539",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.539"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

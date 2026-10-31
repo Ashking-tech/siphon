@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Service
+Name=Siphon
+ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/mp4;video/quicktime;video/x-matroska;video/webm;
+Actions=convertToMp3;
+X-KDE-Submenu=Siphon
+Icon=audio-x-generic
+
+[Desktop Action convertToMp3]
+Name=Convert to MP3
+Icon=audio-x-generic
+Exec=siphon-gui-kde convert --to mp3 %F

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#080909" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7f3" media="(prefers-color-scheme: light)">
+<title>Siphon: convert media in place without a second copy</title>
+<meta name="description" content="Siphon is a media converter for Linux that converts video, audio, images and PDFs in place. It verifies the output before consuming the source, so a 60 GB film needs a few hundred megabytes free.">
+<!-- TODO: replace siphon.example with the production domain before publishing. -->
+<link rel="canonical" href="https://siphon.example/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:url" content="https://siphon.example/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Siphon">
+<meta property="og:title" content="Siphon: convert media in place without a second copy">
+<meta property="og:description" content="A media converter for Linux that writes and verifies the output before consuming the source. A 60 GB film converts with a few hundred megabytes free.">
+<meta property="og:image" content="https://siphon.example/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Siphon: convert in place. No second copy.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+{"@type":"WebSite","@id":"https://siphon.example/#website","name":"Siphon","alternateName":"siphon","url":"https://siphon.example/","inLanguage":"en"},
+{"@type":"SoftwareApplication","@id":"https://siphon.example/#software","name":"Siphon","alternateName":"siphon","description":"A media converter for Linux that converts video, audio, images and PDFs in place, verifying the output before it consumes the source.","applicationCategory":"UtilitiesApplication","applicationSubCategory":"Media converter","operatingSystem":"Linux","softwareVersion":"0.1.0-dev","url":"https://siphon.example/","codeRepository":"https://github.com/OWNER/siphon"},
+{"@type":"FAQPage","@id":"https://siphon.example/#questions","mainEntity":[
+{"@type":"Question","name":"Is it safe?","acceptedAnswer":{"@type":"Answer","text":"Yes. Safe modes keep the source byte-identical until the output is verified and renamed. Video relocate verifies each segment before truncating it. siphon recover resumes after a crash."}},
+{"@type":"Question","name":"How much free space does it need?","acceptedAnswer":{"@type":"Answer","text":"Video needs one segment, typically 30 to 600 MB. Safe-only pairs need room for the source and the output. siphon inspect prints the exact figure."}},
+{"@type":"Question","name":"Does it overwrite my original?","acceptedAnswer":{"@type":"Answer","text":"The source is consumed on success. Safe modes leave it untouched until verification. If you need to keep it, copy it first when you have room."}},
+{"@type":"Question","name":"Does it work outside KDE?","acceptedAnswer":{"@type":"Answer","text":"Yes. The command line tool works on any Linux desktop or server. The Dolphin ServiceMenu is optional."}}
+]}
+]}
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="page">
+<aside class="side">
+<a class="brand" href="./" aria-label="Siphon home">
+<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#c9f24d"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#080909"/></svg>
+<span>Siphon</span>
+</a>
+<nav aria-label="On this page">
+<p class="nav-label">On this page</p>
+<ul>
+<li><a href="#difference">The difference</a></li>
+<li><a href="#download">Get Siphon</a></li>
+<li><a href="#how">How it works</a></li>
+<li><a href="#formats">Formats</a></li>
+<li><a href="#limits">Limits</a></li>
+<li><a href="#questions">Questions</a></li>
+</ul>
+</nav>
+<div class="side-foot">
+<p><span class="live-dot"></span> CLI + Dolphin</p>
+<p>No network. No telemetry.</p>
+</div>
+</aside>
+
+<div class="content">
+<header class="top">
+<div class="status"><span class="live-dot"></span> v0.1.0-dev · Linux</div>
+<div class="top-links">
+<button class="theme-toggle" type="button" hidden>Switch to light mode</button>
+<a class="ghost" href="https://github.com/OWNER/siphon">Star on GitHub</a>
+</div>
+</header>
+
+<main id="main">
+<section class="hero">
+<div class="wrap">
+<div class="hero-copy">
+<p class="eyebrow">Linux media converter</p>
+<h1>Convert in place.<br><em>No second copy.</em></h1>
+<div class="hero-row">
+<div class="hero-intro">
+<p class="lead">Siphon converts video, audio, images and PDFs. For video, it works in one verified segment at a time by default, so it never needs a second full copy.</p>
+<div class="cta">
+<a class="btn primary" href="#download">Build from source <span aria-hidden="true">→</span></a>
+<a class="btn" href="#formats">See formats</a>
+</div>
+<p class="hero-note">Peak extra space for a 60 GB film: about <strong>340 MB</strong>.</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="product-demo" aria-label="Siphon product demo">
+<div class="wrap">
+<figure class="product-demo-card">
+<video class="product-demo-video" autoplay muted loop playsinline controls preload="metadata" poster="media/siphon-product-poster.jpg" aria-label="Siphon converting a large MKV video in place, verifying each segment before reclaiming space">
+<source src="media/siphon-product.webm" type="video/webm">
+<source src="media/siphon-product.mp4" type="video/mp4">
+</video>
+<figcaption><span>See Siphon in action</span><span>One verified segment at a time</span></figcaption>
+</figure>
+</div>
+</section>
+
+<section class="section" id="difference">
+<div class="wrap">
+<p class="section-index">01 / The difference</p>
+<h2>A converter should not need room for the file <em>and</em> its replacement.</h2>
+<p class="section-lead">Every ordinary converter writes a complete second file. Siphon's video engine works backwards from the end of the MKV: copy one keyframe-aligned segment into the MP4, verify it, then release those source bytes. Peak extra space is one segment, not one film.</p>
+<figure class="compare compare-section">
+<div class="compare-head"><span>Peak disk use</span><span>60 GB MKV → MP4 · 45 Mbps · 60 s segments</span></div>
+<div class="compare-row">
+<div class="compare-label"><span>A normal converter</span><span class="mono">2×</span></div>
+<div class="bar" aria-hidden="true"><span class="bar-src w-50"></span><span class="bar-copy w-50"></span></div>
+<p class="compare-note">source + a complete second copy</p>
+</div>
+<div class="compare-row">
+<div class="compare-label"><span class="accent">Siphon</span><span class="mono">1× + one segment</span></div>
+<div class="bar" aria-hidden="true"><span class="bar-src w-94"></span><span class="bar-out w-6"></span></div>
+<p class="compare-note">source + 340 MB, whatever the film size</p>
+</div>
+<figcaption>Conceptual comparison, not to scale. Siphon still needs room for the output; it just never needs the whole film twice.</figcaption>
+</figure>
+</div>
+</section>
+
+<section class="section alt" id="download">
+<div class="wrap">
+<p class="section-index">02 / Get Siphon</p>
+<h2>Build from source.</h2>
+<p class="section-lead">You need Go, <code>ffmpeg</code>/<code>ffprobe</code> ≥ 5.0, and <code>lame</code> ≥ 3.100.</p>
+<div class="download-grid">
+<div>
+<h3>CLI</h3>
+<div class="code-card">
+<header><span class="code-card-title">Build and install</span><span>shell</span></header>
+<pre><code><span class="code-command">git clone https://github.com/OWNER/siphon.git</span>
+<span class="code-command">cd siphon</span>
+<span class="code-command">make build</span>
+<span class="code-command">sudo install -Dm755 bin/siphon /usr/local/bin/siphon</span>
+<span class="code-command">siphon doctor</span></code></pre>
+</div>
+<div class="note-card">
+<p><strong>No release binaries yet.</strong> Distribution packages are planned. Watch the <a href="https://github.com/OWNER/siphon/releases">releases page</a> for the first tagged build.</p>
+</div>
+</div>
+<aside>
+<h3>Dolphin / KDE</h3>
+<p>Optional ServiceMenu for Plasma 5 and 6.</p>
+<div class="code-card">
+<header><span class="code-card-title">Install ServiceMenu</span><span>shell</span></header>
+<pre><code><span class="code-command">make install-kde</span></code></pre>
+</div>
+<p class="fine">Optional: WebP, Poppler and <code>kdialog</code> for those formats and the menu.</p>
+</aside>
+</div>
+</div>
+</section>
+
+<section class="section" id="how">
+<div class="wrap">
+<p class="section-index">03 / How it works</p>
+<h2>One verified segment at a time.</h2>
+<div class="steps">
+<article class="step"><span class="n">01</span><h3>Inspect</h3><p>Checks the pair, free space and crash cost. It changes nothing.</p></article>
+<article class="step"><span class="n">02</span><h3>Convert</h3><p>Muxes one keyframe-aligned segment into the output, verifies it, then releases those source bytes.</p></article>
+<article class="step"><span class="n">03</span><h3>Finish</h3><p>Verifies the result, renames it into place, and removes the source. If interrupted, <code>siphon recover</code> resumes.</p></article>
+</div>
+<p class="note">Video is remuxed, not transcoded. Audio, images and PDFs use safe temp-file swaps.</p>
+</div>
+</section>
+
+<section class="section alt" id="formats">
+<div class="wrap">
+<p class="section-index">04 / Formats</p>
+<h2>What it converts.</h2>
+<p class="section-lead">Run <code>siphon inspect</code> to confirm a pair and see the exact space requirement.</p>
+<div class="format-rows">
+<div class="format-row">
+<div class="format-title">
+<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/></svg></span>
+<h3>Video</h3>
+</div>
+<div class="pair-chips" aria-label="Video conversion formats">
+<span class="pair-chip"><span class="format-mark mkv">MKV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp4">MP4</span></span>
+<span class="pair-chip"><span class="format-mark mp4">MP4</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mkv">MKV</span><span class="new">new</span></span>
+<span class="pair-chip"><span class="format-mark mov">MOV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mkv">MKV</span><span class="new">new</span></span>
+<span class="pair-chip"><span class="format-mark mkv">MKV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mov">MOV</span><span class="new">new</span></span>
+<span class="pair-chip"><span class="format-mark webm">WebM</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark mp4">MP4</span><span class="new">new</span></span>
+<span class="pair-chip"><span class="format-mark gif">GIF</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark mp4">MP4</span><span class="new">new</span></span>
+</div>
+<p class="format-note">MKV → MP4 defaults to relocate. <code>--mode safe</code> writes classic MP4 at 2× space.</p>
+</div>
+<div class="format-row">
+<div class="format-title">
+<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></span>
+<h3>Audio</h3>
+</div>
+<div class="pair-chips" aria-label="Audio conversion formats">
+<span class="pair-chip"><span class="format-mark wav">WAV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp3">MP3</span></span>
+<span class="pair-chip"><span class="format-mark video">VIDEO</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp3">MP3</span><span class="new">new</span></span>
+</div>
+<p class="format-note"><code>--mode reclaim</code> is opt-in and uses about 1× space.</p>
+</div>
+<div class="format-row">
+<div class="format-title">
+<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg></span>
+<h3>Images</h3>
+</div>
+<div class="pair-chips" aria-label="Image conversion formats">
+<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark jpg">JPG</span></span>
+<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark webp">WebP</span></span>
+<span class="pair-chip"><span class="format-mark jpg">JPG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark webp">WebP</span></span>
+</div>
+<p class="format-note">Safe swaps. Alpha needs <code>--bg</code> when the target has no alpha.</p>
+</div>
+<div class="format-row">
+<div class="format-title">
+<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span>
+<h3>Documents</h3>
+</div>
+<div class="pair-chips" aria-label="Document conversion formats">
+<span class="pair-chip"><span class="format-mark pdf">PDF</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark png">PNG</span><span class="pair-slash" aria-hidden="true">/</span><span class="format-mark jpg">JPG</span><span class="new">new</span></span>
+<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-slash" aria-hidden="true">/</span><span class="format-mark jpg">JPG</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark pdf">PDF</span><span class="new">new</span></span>
+</div>
+<p class="format-note">One page per file. Safe-only.</p>
+</div>
+</div>
+<p class="note">Pairs marked <span class="new">new</span> are in progress for v0.2 and safe-only.</p>
+</div>
+</section>
+
+<section class="section" id="limits">
+<div class="wrap">
+<p class="section-index">05 / Limits</p>
+<h2>What it won't do.</h2>
+<p class="section-lead">Siphon refuses rather than guess. These limits matter before you run it.</p>
+<ul class="notes-list">
+<li><strong>Linux only.</strong> CLI and Dolphin ServiceMenu. No first-class GUI yet.</li>
+<li><strong>Video is remux-only.</strong> One video and one optional audio track. Fragmented MP4 by default.</li>
+<li><strong>Relocate needs sparse files.</strong> ext4, btrfs and XFS work. FAT32, exFAT and NTFS-3G are refused.</li>
+<li><strong>Audio reclaim is opt-in.</strong> A crash can leave a ≤ 26 ms splice. The default safe mode leaves the source untouched until verification.</li>
+</ul>
+</div>
+</section>
+
+<section class="section alt" id="questions">
+<div class="wrap">
+<p class="section-index">06 / Questions</p>
+<h2>A few honest answers.</h2>
+<div class="faq">
+<div class="qa"><h3>Is it safe?</h3><p>Yes. Safe modes keep the source byte-identical until the output is verified and renamed. Video relocate verifies each segment before truncating it. <code>siphon recover</code> resumes after a crash.</p></div>
+<div class="qa"><h3>How much free space does it need?</h3><p>Video needs one segment, typically 30–600 MB. Safe-only pairs need room for the source and the output. <code>siphon inspect</code> prints the exact figure.</p></div>
+<div class="qa"><h3>Does it overwrite my original?</h3><p>The source is consumed on success. Safe modes leave it untouched until verification. If you need to keep it, copy it first when you have room.</p></div>
+<div class="qa"><h3>Does it work outside KDE?</h3><p>Yes. The command line tool works on any Linux desktop or server. The Dolphin ServiceMenu is optional.</p></div>
+</div>
+</div>
+</section>
+</main>
+
+<footer class="footer">
+<div class="wrap">
+<div class="footer-grid">
+<div>
+<a class="brand footer-brand" href="./" aria-label="Siphon home">
+<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#c9f24d"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#080909"/></svg>
+<span>Siphon</span>
+</a>
+<p class="footer-tagline">Convert media in place on Linux.</p>
+</div>
+<div class="footer-links">
+<a href="https://github.com/OWNER/siphon/blob/main/spec.md">Specification</a>
+<a href="https://github.com/OWNER/siphon">Source code</a>
+<a href="https://github.com/OWNER/siphon/issues">Report a bug</a>
+<a href="#download">Get Siphon</a>
+</div>
+</div>
+<p class="fine">© 2026 the Siphon authors. <!-- TODO: add the published license before launch. --></p>
+</div>
+</footer>
+</div>
+</div>
+<script src="theme.js" defer></script>
+</body>
+</html>

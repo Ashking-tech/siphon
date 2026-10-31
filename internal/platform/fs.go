@@ -148,7 +148,7 @@ func ReapTemps(dir, stem string, minAge time.Duration) ([]string, error) {
 	var removed []string
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".tmp") {
+		if !strings.HasPrefix(name, prefix) || !strings.Contains(name, ".tmp") {
 			continue
 		}
 		info, err := e.Info()
@@ -323,6 +323,7 @@ type Snapshot struct {
 	Ino     uint64
 	Size    int64
 	MtimeNS int64
+	CtimeNS int64
 }
 
 // TakeSnapshot stats path without following symlinks.
@@ -336,6 +337,7 @@ func TakeSnapshot(path string) (Snapshot, error) {
 		Ino:     st.Ino,
 		Size:    st.Size,
 		MtimeNS: st.Mtim.Nano(),
+		CtimeNS: st.Ctim.Nano(),
 	}, nil
 }
 
@@ -377,6 +379,7 @@ func (s Snapshot) CheckOpen(f *os.File) error {
 		Ino:     st.Ino,
 		Size:    st.Size,
 		MtimeNS: st.Mtim.Nano(),
+		CtimeNS: st.Ctim.Nano(),
 	}
 	if got != s {
 		return siphonerr.New(siphonerr.SourceChanged,

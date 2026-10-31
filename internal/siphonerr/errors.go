@@ -37,6 +37,15 @@ const (
 	AlphaUnsupported   Code = "E_ALPHA_UNSUPPORTED"
 	SourceChanged      Code = "E_SOURCE_CHANGED"
 
+	// v0.2 document/image and media refusals (spec §6.7). Additive only.
+	PDFMultipage      Code = "E_PDF_MULTIPAGE"
+	PDFEncrypted      Code = "E_PDF_ENCRYPTED"
+	PDFInvalid        Code = "E_PDF_INVALID"
+	PDFTooLarge       Code = "E_PDF_TOO_LARGE"
+	TranscodeRequired Code = "E_TRANSCODE_REQUIRED"
+	NoAudio           Code = "E_NO_AUDIO"
+	AudioTrack        Code = "E_AUDIO_TRACK"
+
 	// Verification failures (exit 3).
 	StitchFailed Code = "E_STITCH_FAILED"
 	SegmentPlan  Code = "E_SEGMENT_PLAN"
@@ -57,6 +66,7 @@ type Error struct {
 	Cause           error
 	Exit            int
 	SourceUntouched bool
+	Hints           map[string]bool
 }
 
 func (e *Error) Error() string {
@@ -104,6 +114,26 @@ func (e *Error) WithExit(exit int) *Error {
 func (e *Error) Untouched(v bool) *Error {
 	e.SourceUntouched = v
 	return e
+}
+
+// WithHints attaches boolean retry hints for the JSON/KDE surfaces.
+func (e *Error) WithHints(hints map[string]bool) *Error {
+	if len(hints) > 0 {
+		e.Hints = make(map[string]bool, len(hints))
+		for k, v := range hints {
+			e.Hints[k] = v
+		}
+	}
+	return e
+}
+
+// HintsOf returns the structured retry hints attached to err, if any.
+func HintsOf(err error) map[string]bool {
+	var se *Error
+	if errors.As(err, &se) {
+		return se.Hints
+	}
+	return nil
 }
 
 // CodeOf returns the structured code of err, or E_INTERNAL when it is not a
@@ -168,7 +198,8 @@ func isRefusal(code Code) bool {
 		Permission, TargetExists, CrossDevice, CodecIncompatible, MetadataDrop,
 		NoSpace, InplaceInfeasible, FSNoSparse, StaleJournal, SourceCorrupt,
 		Dependency, DependencyOutdated, RootDenied, ConfirmationNeeded,
-		AlphaUnsupported, SourceChanged:
+		AlphaUnsupported, SourceChanged, PDFMultipage, PDFEncrypted, PDFInvalid,
+		PDFTooLarge, TranscodeRequired, NoAudio, AudioTrack:
 		return true
 	}
 	return false

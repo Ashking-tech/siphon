@@ -38,7 +38,18 @@ func newInspectCmd() *cobra.Command {
 func runInspect(cmd *cobra.Command, job *core.Job) error {
 	plan, err := convert.Inspect(cmd.Context(), job)
 	if err != nil {
-		return emitFailure(nil, err)
+		res := &core.Result{
+			OK:              false,
+			Code:            string(siphonerr.CodeOf(err)),
+			Message:         siphonerr.MessageOf(err),
+			Plan:            plan,
+			Hints:           siphonerr.HintsOf(err),
+			SourceUntouched: true,
+		}
+		if !globals.JSON && plan != nil {
+			fmt.Fprint(os.Stdout, preflight.FormatPlan(plan))
+		}
+		return emitFailure(res, err)
 	}
 	res := &core.Result{OK: true, Plan: plan, SourceUntouched: true}
 	if globals.JSON {
