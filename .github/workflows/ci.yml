@@ -43,4 +43,13 @@ jobs:
         run: go vet ./...
 
       - name: Test KDE wrapper
-        run: ./kde/test-wrapper.sh
+        shell: bash
+        run: |
+          set +e
+          ./kde/test-wrapper.sh 2>&1 | tee /tmp/kde-test.log
+          status=${PIPESTATUS[0]}
+          if ((status != 0)); then
+            msg=$(tail -n 80 /tmp/kde-test.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=KDE wrapper test failure::$msg"
+            exit "$status"
+          fi
