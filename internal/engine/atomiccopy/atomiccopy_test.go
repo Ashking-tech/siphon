@@ -405,7 +405,11 @@ func TestWebPRoundTrip(t *testing.T) {
 	if _, err := run(t, job); err != nil {
 		t.Fatal(err)
 	}
-	if img := decodeFile(t, job.TargetPath); img.Bounds().Dx() != 16 {
+	img, _, _, err := imaging.Decode(context.Background(), job.TargetPath, formats.WEBP, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds().Dx() != 16 {
 		t.Fatalf("webp target = %v", img.Bounds())
 	}
 	assertNoTemps(t, dir)
