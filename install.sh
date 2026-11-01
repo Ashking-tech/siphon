@@ -12,6 +12,8 @@ set -eu
 REPO="Ashking-tech/siphon"
 VERSION="${SIPHON_VERSION:-}"
 PREFIX="${PREFIX:-}"
+BINDIR="${BINDIR:-}"
+DATADIR="${DATADIR:-}"
 PLASMA="both"
 NO_KDE=0
 NO_CACHE=0
@@ -26,6 +28,8 @@ Usage:
 Options:
   --version <tag>    Release tag to install (default: latest)
   --prefix <dir>     Install prefix (default: $HOME/.local)
+  --bindir <dir>     Binary directory (default: <prefix>/bin)
+  --datadir <dir>    Data directory (default: <prefix>/share)
   --plasma <which>   KDE menus: auto, 5, 6, or both (default: both)
   --no-kde           Install the CLI only; skip the Dolphin ServiceMenu
   --no-cache         Do not run kbuildsycoca6 after installing KDE menus
@@ -34,6 +38,8 @@ Options:
 Environment:
   SIPHON_VERSION     Same as --version
   PREFIX             Same as --prefix
+  BINDIR             Same as --bindir
+  DATADIR            Same as --datadir
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/Ashking-tech/siphon/main/install.sh | sh
@@ -57,6 +63,16 @@ while [ "$#" -gt 0 ]; do
 	--prefix)
 		[ "$#" -ge 2 ] || die "--prefix requires a value"
 		PREFIX=$2
+		shift 2
+		;;
+	--bindir)
+		[ "$#" -ge 2 ] || die "--bindir requires a value"
+		BINDIR=$2
+		shift 2
+		;;
+	--datadir)
+		[ "$#" -ge 2 ] || die "--datadir requires a value"
+		DATADIR=$2
 		shift 2
 		;;
 	--plasma)
@@ -93,6 +109,17 @@ esac
 case "$PREFIX" in
 /) ;;
 *) PREFIX=${PREFIX%/} ;;
+esac
+
+BINDIR=${BINDIR:-$PREFIX/bin}
+DATADIR=${DATADIR:-$PREFIX/share}
+case "$BINDIR" in
+/*) ;;
+*) BINDIR="$(pwd)/$BINDIR" ;;
+esac
+case "$DATADIR" in
+/*) ;;
+*) DATADIR="$(pwd)/$DATADIR" ;;
 esac
 
 for cmd in curl tar sha256sum uname install grep sed head mktemp; do
@@ -157,22 +184,22 @@ tar -xzf "$tmp/$archive" -C "$tmp/extract"
 [ -x "$tmp/extract/siphon" ] || die "archive did not contain the siphon binary"
 
 if [ "$NO_KDE" -eq 1 ]; then
-	mkdir -p "$PREFIX/bin"
-	install -m 0755 "$tmp/extract/siphon" "$PREFIX/bin/siphon"
-	printf 'Installed %s\n' "$PREFIX/bin/siphon"
+	mkdir -p "$BINDIR"
+	install -m 0755 "$tmp/extract/siphon" "$BINDIR/siphon"
+	printf 'Installed %s\n' "$BINDIR/siphon"
 else
-	set -- --prefix "$PREFIX" --plasma "$PLASMA"
+	set -- --prefix "$PREFIX" --bindir "$BINDIR" --datadir "$DATADIR" --plasma "$PLASMA"
 	if [ "$NO_CACHE" -eq 1 ]; then
 		set -- "$@" --no-cache
 	fi
 	"$tmp/extract/kde/install.sh" "$@"
 fi
 
-if [ -x "$PREFIX/bin/siphon" ]; then
-	"$PREFIX/bin/siphon" version
+if [ -x "$BINDIR/siphon" ]; then
+	"$BINDIR/siphon" version
 	case ":${PATH:-}:" in
-	*":$PREFIX/bin:"*) ;;
-	*) printf 'Add %s to PATH to run siphon directly.\n' "$PREFIX/bin" ;;
+	*":$BINDIR:"*) ;;
+	*) printf 'Add %s to PATH to run siphon directly.\n' "$BINDIR" ;;
 	esac
 fi
 
