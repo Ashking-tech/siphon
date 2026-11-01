@@ -15,7 +15,7 @@ The static website is in [`site/`](site/) and publishes at
 [ashking-tech.github.io/siphon](https://ashking-tech.github.io/siphon/) after
 GitHub Pages is enabled for the repository.
 
-## Download v0.2.0
+## Download v0.2.1
 
 Linux builds are published for amd64 and arm64. Each archive contains the
 `siphon` CLI, `README.md`, `LICENSE`, the Dolphin installer, the
@@ -23,19 +23,19 @@ Linux builds are published for amd64 and arm64. Each archive contains the
 
 | Platform | Archive |
 | --- | --- |
-| Linux amd64 | [siphon_0.2.0_linux_amd64.tar.gz](https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz) |
-| Linux arm64 | [siphon_0.2.0_linux_arm64.tar.gz](https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_arm64.tar.gz) |
-| SHA256 checksums | [siphon_0.2.0_checksums.txt](https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt) |
+| Linux amd64 | [siphon_0.2.1_linux_amd64.tar.gz](https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_linux_amd64.tar.gz) |
+| Linux arm64 | [siphon_0.2.1_linux_arm64.tar.gz](https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_linux_arm64.tar.gz) |
+| SHA256 checksums | [siphon_0.2.1_checksums.txt](https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_checksums.txt) |
 
 Download the archive for your architecture, verify it, and extract it:
 
 ```sh
-curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz
-curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt
-sha256sum --check --ignore-missing siphon_0.2.0_checksums.txt
-mkdir -p siphon-0.2.0
-tar -xzf siphon_0.2.0_linux_amd64.tar.gz -C siphon-0.2.0
-cd siphon-0.2.0
+curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_linux_amd64.tar.gz
+curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_checksums.txt
+sha256sum --check --ignore-missing siphon_0.2.1_checksums.txt
+mkdir -p siphon-0.2.1
+tar -xzf siphon_0.2.1_linux_amd64.tar.gz -C siphon-0.2.1
+cd siphon-0.2.1
 ./siphon version
 ./siphon doctor
 ```
