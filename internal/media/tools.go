@@ -128,6 +128,8 @@ func toolVersion(ctx context.Context, name, path string) (string, error) {
 	switch name {
 	case "lame":
 		args = []string{"--version"}
+	case "pdfinfo", "pdftoppm":
+		args = []string{"-v"}
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	var buf bytes.Buffer
