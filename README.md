@@ -26,7 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/Ashking-tech/siphon/main/install.sh
 
 This installs the `siphon` CLI, the `siphon-gui-kde` wrapper, and the Dolphin
 ServiceMenus under `~/.local`, then refreshes KDE's menu cache. The installer
-verifies the release SHA256 before extracting. Restart Dolphin afterwards.
+verifies the release SHA256 before extracting. Restart Dolphin afterwards. If
+`~/.local/bin` is not on your `PATH`, add it before running the commands below.
 
 For a CLI-only install:
 
@@ -70,7 +71,8 @@ On arm64, replace `amd64` with `arm64` in the archive name.
 ## Use
 
 ```sh
-# See the plan without changing the source
+# See available targets or a dry-run plan
+siphon inspect photo.png
 siphon inspect movie.mkv --to mp4
 
 # Convert in place
