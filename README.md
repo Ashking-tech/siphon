@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/Ashking-tech/siphon/main/install.sh
 ```
 
 Pass `--version v0.2.1` to pin a release or `--prefix DIR` to install
-elsewhere. Run the installer with `--help` for all options.
+elsewhere. Add `--help` after `sh -s --` for all options.
 
 To inspect the script before running it:
 

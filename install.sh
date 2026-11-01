@@ -128,7 +128,9 @@ esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/siphon-install.XXXXXX") ||
 	die "could not create a temporary directory"
-trap 'rm -rf "$tmp"' EXIT INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 archive="siphon_${ver}_linux_${arch}.tar.gz"
 checksums="siphon_${ver}_checksums.txt"
@@ -141,6 +143,9 @@ curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
 curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
 	"$base/$checksums" -o "$tmp/$checksums" ||
 	die "download failed: $base/$checksums"
+
+grep -Fq "  $archive" "$tmp/$checksums" ||
+	die "checksums file does not list $archive"
 
 (
 	cd "$tmp"
