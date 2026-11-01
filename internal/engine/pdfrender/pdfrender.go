@@ -11,6 +11,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -310,6 +311,9 @@ func checkPNGNoAlpha(path string) error {
 	if colorType == 3 && pngHasTRNS(path) {
 		return siphonerr.New(siphonerr.VerifyFailed,
 			"rendered PNG palette is transparent; PDF → image must be opaque")
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return siphonerr.Wrap(siphonerr.VerifyFailed, err, "cannot rewind the PNG header")
 	}
 	if _, err := png.DecodeConfig(f); err != nil {
 		return siphonerr.Wrap(siphonerr.VerifyFailed, err, "rendered PNG header does not decode")
