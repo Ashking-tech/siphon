@@ -95,7 +95,7 @@ case "$PREFIX" in
 *) PREFIX=${PREFIX%/} ;;
 esac
 
-for cmd in curl tar sha256sum uname install; do
+for cmd in curl tar sha256sum uname install grep sed head mktemp; do
 	command -v "$cmd" >/dev/null 2>&1 || die "required command not found: $cmd"
 done
 
