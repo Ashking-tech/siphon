@@ -438,7 +438,7 @@ printf 'ok - qdbus fallback\n'
 # 9. Installer installs both Plasma families, wrapper, and binary; uninstall
 #    removes the wrapper and menus without touching unrelated files.
 INSTALL="$TMP/install"
-"$INSTALLER" --prefix "$INSTALL" --plasma both --no-cache >/dev/null
+SIPHON_BIN="$MOCK/siphon" "$INSTALLER" --prefix "$INSTALL" --plasma both --no-cache >/dev/null
 [[ -x $INSTALL/bin/siphon-gui-kde ]] || {
 	printf 'FAIL: wrapper not installed\n' >&2
 	exit 1
@@ -511,7 +511,7 @@ printf 'ok - install/uninstall\n'
 
 # 10. A prefix containing spaces still yields a valid quoted Exec path.
 SPACE_INSTALL="$TMP/install with space"
-"$INSTALLER" --prefix "$SPACE_INSTALL" --plasma 6 --no-cache >/dev/null
+SIPHON_BIN="$MOCK/siphon" "$INSTALLER" --prefix "$SPACE_INSTALL" --plasma 6 --no-cache >/dev/null
 grep -Fq "Exec=\"$SPACE_INSTALL/bin/siphon-gui-kde\" convert --to " \
 	"$SPACE_INSTALL/share/kio/servicemenus/siphon-mkv-to-mp4.desktop" || {
 	printf 'FAIL: spaced wrapper path was not quoted\n' >&2
