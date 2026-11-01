@@ -82,6 +82,7 @@
   --accent-ink: #111719;
   --accent-soft: rgba(105, 185, 199, 0.08);
   --accent-line: rgba(105, 185, 199, 0.38);
+  --release: #9eefff;
   --cta: #69b9c7;
   --cta-ink: var(--accent-ink);
   --warn: #e8a17f;
@@ -108,6 +109,7 @@
   --accent-ink: oklch(98% 0.01 135);
   --accent-soft: oklch(43% 0.115 135 / 0.09);
   --accent-line: oklch(43% 0.115 135 / 0.38);
+  --release: oklch(40% 0.14 205);
   --cta: oklch(83% 0.18 125);
   --cta-ink: oklch(20% 0.025 135);
   --warn: #a4471f;
@@ -1246,6 +1248,19 @@ li {
   color: var(--ink-soft);
   font-size: 0.92rem;
   line-height: 1.6;
+}
+
+.release-files a {
+  color: var(--release);
+  font-family: "Hack", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration-color: currentColor;
+  text-underline-offset: 4px;
+}
+
+.release-files a:hover {
+  color: var(--ink);
 }
 
 .kde-shot {
