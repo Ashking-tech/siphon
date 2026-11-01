@@ -189,6 +189,9 @@ if ((INSTALL_BINARY == 1)); then
 		source_binary=$SIPHON_BIN
 	elif [[ -x $REPO_DIR/bin/siphon ]]; then
 		source_binary="$REPO_DIR/bin/siphon"
+	elif [[ -x $REPO_DIR/siphon ]]; then
+		# Release archives keep the binary at the archive root, next to kde/.
+		source_binary="$REPO_DIR/siphon"
 	elif command -v siphon >/dev/null 2>&1; then
 		source_binary="$(command -v siphon)"
 	fi

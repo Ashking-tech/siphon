@@ -20,8 +20,18 @@ python3 -m http.server 8000 --directory site
 
 The site is configured for `https://ashking-tech.github.io/siphon/`. The social
 card source is `og.html`; regenerate `og.png` after changing the published URL.
-There are no release artifacts yet, so the page deliberately does not offer a
-Siphon download button, checksum, or package name.
+
+## Releases
+
+The download section pins the v0.2.0 GitHub release assets:
+
+- `siphon_0.2.0_linux_amd64.tar.gz`
+- `siphon_0.2.0_linux_arm64.tar.gz`
+- `siphon_0.2.0_checksums.txt`
+
+Update the version, archive names, and URLs in `index.html` and `llms.txt` when
+a new release is tagged. Unversioned `latest` aliases do not exist yet, so each
+release needs this small docs update.
 
 ## Files
 
@@ -30,9 +40,10 @@ Siphon download button, checksum, or package name.
 | `index.html` | the whole page |
 | `style.css` | all styles; warm-paper light and dark themes |
 | `theme.js` | light/dark toggle and saved theme preference |
-| `favicon.svg` | lime mark |
+| `favicon.svg` | cyan mark |
 | `og.png` | 1200×630 social card |
 | `og.html` | source used to render `og.png`; `noindex` |
+| `media/` | product demo video, poster, and Dolphin ServiceMenu screenshot |
 | `llms.txt` | compact product summary for language models |
 | `robots.txt`, `sitemap.xml` | crawler metadata |
 | `fonts/` | subset WOFF2 files and their licenses |
@@ -81,11 +92,11 @@ Check the result at exactly 1200×630 before publishing.
 
 These are intentional and should survive edits:
 
-- **v0.2 pairs are marked `new` and described as in progress.** Do not present
-  them as shipped until the release is tagged.
-- **No invented downloads, Siphon package names, checksums, benchmarks, GUI
-  screenshots, or license claims.** The page says there are no release binaries
-  yet.
+- **v0.2 pairs are shipped.** They are listed in the format catalog without
+  `new` badges or in-progress language.
+- **Downloads point only at the pinned v0.2.0 GitHub release assets.** Do not
+  invent mirrors, Siphon package names, checksums, benchmarks, GUI screenshots,
+  or license claims. The project license is MIT, copyright Ashking-tech.
 - **The peak disk-use comparison is conceptual, not to scale.** It shows the
   default video relocate path: 2× for a normal converter versus source plus one
   segment for Siphon. The caption says so.
@@ -95,8 +106,8 @@ These are intentional and should survive edits:
   output, not a benchmark or a claim about a specific file.
 - **Video relocate is remux-only.** The page does not claim transcoding,
   multi-stream support, or compatibility with every player.
-- **Images, PDFs, and the new pairs are safe-only.** The page does not claim the
-  video engine's 1× space saving for them.
+- **Images, PDFs, and the v0.2 pairs are safe-only.** The page does not claim
+  the video engine's 1× space saving for them.
 - **Linux only, no first-class GUI yet.** The Dolphin ServiceMenu is the
   graphical surface today.
 

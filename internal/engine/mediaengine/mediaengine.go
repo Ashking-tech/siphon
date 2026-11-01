@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -662,7 +661,7 @@ func checkDuration(src, out, tolerance time.Duration) error {
 }
 
 func verifyErr(format string, args ...any) error {
-	return siphonerr.New(siphonerr.VerifyFailed, "output verification failed: "+fmt.Sprintf(format, args...))
+	return siphonerr.New(siphonerr.VerifyFailed, "output verification failed: "+format, args...)
 }
 
 func abs(d time.Duration) time.Duration {

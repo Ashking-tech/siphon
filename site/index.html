@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#f5f7f3">
+<meta name="theme-color" content="#111719">
 <title>Siphon: convert media in place without a second copy</title>
 <meta name="description" content="Siphon is a media converter for Linux that converts video, audio, images and PDFs in place. It verifies the output before consuming the source, so a 60 GB film needs a few hundred megabytes free.">
 <link rel="canonical" href="https://ashking-tech.github.io/siphon/">
@@ -24,7 +24,7 @@
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
 {"@type":"WebSite","@id":"https://ashking-tech.github.io/siphon/#website","name":"Siphon","alternateName":"siphon","url":"https://ashking-tech.github.io/siphon/","inLanguage":"en"},
-{"@type":"SoftwareApplication","@id":"https://ashking-tech.github.io/siphon/#software","name":"Siphon","alternateName":"siphon","description":"A media converter for Linux that converts video, audio, images and PDFs in place, verifying the output before it consumes the source.","applicationCategory":"UtilitiesApplication","applicationSubCategory":"Media converter","operatingSystem":"Linux","softwareVersion":"0.1.0-dev","url":"https://ashking-tech.github.io/siphon/","codeRepository":"https://github.com/Ashking-tech/siphon"},
+{"@type":"SoftwareApplication","@id":"https://ashking-tech.github.io/siphon/#software","name":"Siphon","alternateName":"siphon","description":"A media converter for Linux that converts video, audio, images and PDFs in place, verifying the output before it consumes the source.","applicationCategory":"UtilitiesApplication","applicationSubCategory":"Media converter","operatingSystem":"Linux","softwareVersion":"0.2.0","url":"https://ashking-tech.github.io/siphon/","codeRepository":"https://github.com/Ashking-tech/siphon"},
 {"@type":"FAQPage","@id":"https://ashking-tech.github.io/siphon/#questions","mainEntity":[
 {"@type":"Question","name":"Is it safe?","acceptedAnswer":{"@type":"Answer","text":"Yes. Safe modes keep the source byte-identical until the output is verified and renamed. Video relocate verifies each segment before truncating it. siphon recover resumes after a crash."}},
 {"@type":"Question","name":"How much free space does it need?","acceptedAnswer":{"@type":"Answer","text":"Video needs one segment, typically 30 to 600 MB. Safe-only pairs need room for the source and the output. siphon inspect prints the exact figure."}},
@@ -40,7 +40,7 @@
 <div class="page">
 <aside class="side">
 <a class="brand" href="./" aria-label="Siphon home">
-<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#c9f24d"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#080909"/></svg>
+<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="#69b9c7"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#111719"/></svg>
 <span>Siphon</span>
 </a>
 <nav aria-label="On this page">
@@ -62,7 +62,7 @@
 
 <div class="content">
 <header class="top">
-<div class="status"><span class="live-dot"></span> v0.1.0-dev · Linux</div>
+<div class="status"><span class="live-dot"></span> v0.2.0 · Linux</div>
 <div class="top-links">
 <button class="theme-toggle" type="button" hidden>Switch to light mode</button>
 <a class="ghost" href="https://github.com/Ashking-tech/siphon">Star on GitHub</a>
@@ -79,7 +79,7 @@
 <div class="hero-intro">
 <p class="lead">Siphon converts video, audio, images and PDFs. For video, it works in one verified segment at a time by default, so it never needs a second full copy.</p>
 <div class="cta">
-<a class="btn primary" href="#download">Build from source <span aria-hidden="true">→</span></a>
+<a class="btn primary" href="#download">Download v0.2.0 <span aria-hidden="true">→</span></a>
 <a class="btn" href="#formats">See formats</a>
 </div>
 <p class="hero-note">Peak extra space for a 60 GB film: about <strong>340 MB</strong>.</p>
@@ -92,11 +92,10 @@
 <section class="product-demo" aria-label="Siphon product demo">
 <div class="wrap">
 <figure class="product-demo-card">
-<video class="product-demo-video" autoplay muted loop playsinline controls preload="metadata" poster="media/siphon-product-poster.jpg" aria-label="Siphon converting a large MKV video in place, verifying each segment before reclaiming space">
+<video class="product-demo-video" autoplay muted loop playsinline preload="metadata" poster="media/siphon-product-poster.jpg" aria-label="Siphon converting a large MKV video in place, verifying each segment before reclaiming space" tabindex="-1">
 <source src="media/siphon-product.webm" type="video/webm">
 <source src="media/siphon-product.mp4" type="video/mp4">
 </video>
-<figcaption><span>See Siphon in action</span><span>One verified segment at a time</span></figcaption>
 </figure>
 </div>
 </section>
@@ -120,39 +119,116 @@
 </div>
 <figcaption>Conceptual comparison, not to scale. Siphon still needs room for the output; it just never needs the whole film twice.</figcaption>
 </figure>
+
+<figure class="space-examples" aria-labelledby="space-examples-title">
+<div class="space-examples-head">
+<div class="space-examples-heading">
+<p class="space-examples-kicker">Worked examples</p>
+<h3 id="space-examples-title">Peak disk use, by film size.</h3>
+<div class="space-legend" aria-hidden="true">
+<span><span class="legend-swatch legend-swatch-normal"><span></span><span></span></span>A normal converter</span>
+<span><span class="legend-swatch legend-swatch-siphon"><span></span><span></span></span>Siphon</span>
+</div>
+</div>
+<p class="space-examples-intro">For video. Source included. Bars stack source and overhead on a shared 0–240 GB scale; each Siphon bar adds a 340 MB segment.</p>
+</div>
+<div class="space-example-list" role="list">
+<div class="space-example" role="listitem">
+<span class="space-size">10 GB</span>
+<div class="space-bars">
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-normal space-bar-normal-10"><span class="space-segment space-source"></span><span class="space-segment space-overhead space-overhead-normal"></span></span></span>
+<span class="space-value"><span class="space-number"><span class="sr-only">A normal converter: </span>20 GB</span></span>
+</div>
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-siphon space-bar-siphon-10"><span class="space-segment space-source space-source-siphon"></span><span class="space-segment space-overhead space-overhead-siphon"></span></span></span>
+<span class="space-value space-value-accent"><span class="space-number"><span class="sr-only">Siphon: </span>10.3 GB</span><span class="space-delta">10 GB saved</span></span>
+</div>
+</div>
+</div>
+<div class="space-example" role="listitem">
+<span class="space-size">25 GB</span>
+<div class="space-bars">
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-normal space-bar-normal-25"><span class="space-segment space-source"></span><span class="space-segment space-overhead space-overhead-normal"></span></span></span>
+<span class="space-value"><span class="space-number"><span class="sr-only">A normal converter: </span>50 GB</span></span>
+</div>
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-siphon space-bar-siphon-25"><span class="space-segment space-source space-source-siphon"></span><span class="space-segment space-overhead space-overhead-siphon"></span></span></span>
+<span class="space-value space-value-accent"><span class="space-number"><span class="sr-only">Siphon: </span>25.3 GB</span><span class="space-delta">25 GB saved</span></span>
+</div>
+</div>
+</div>
+<div class="space-example" role="listitem">
+<span class="space-size">60 GB</span>
+<div class="space-bars">
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-normal space-bar-normal-60"><span class="space-segment space-source"></span><span class="space-segment space-overhead space-overhead-normal"></span></span></span>
+<span class="space-value"><span class="space-number"><span class="sr-only">A normal converter: </span>120 GB</span></span>
+</div>
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-siphon space-bar-siphon-60"><span class="space-segment space-source space-source-siphon"></span><span class="space-segment space-overhead space-overhead-siphon"></span></span></span>
+<span class="space-value space-value-accent"><span class="space-number"><span class="sr-only">Siphon: </span>60.3 GB</span><span class="space-delta">60 GB saved</span></span>
+</div>
+</div>
+</div>
+<div class="space-example" role="listitem">
+<span class="space-size">120 GB</span>
+<div class="space-bars">
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-normal space-bar-normal-120"><span class="space-segment space-source"></span><span class="space-segment space-overhead space-overhead-normal"></span></span></span>
+<span class="space-value"><span class="space-number"><span class="sr-only">A normal converter: </span>240 GB</span></span>
+</div>
+<div class="space-line-row">
+<span class="space-line" aria-hidden="true"><span class="space-bar space-bar-siphon space-bar-siphon-120"><span class="space-segment space-source space-source-siphon"></span><span class="space-segment space-overhead space-overhead-siphon"></span></span></span>
+<span class="space-value space-value-accent"><span class="space-number"><span class="sr-only">Siphon: </span>120.3 GB</span><span class="space-delta">120 GB saved</span></span>
+</div>
+</div>
+</div>
+</div>
+<figcaption>Rounded values; the 340 MB segment is illustrative. Each bar stacks the source file and its overhead: a complete second copy for a normal converter, one verified segment for Siphon. <code>siphon inspect</code> prints the exact figure.</figcaption>
+</figure>
 </div>
 </section>
 
 <section class="section alt" id="download">
 <div class="wrap">
 <p class="section-index">02 / Get Siphon</p>
-<h2>Build from source.</h2>
-<p class="section-lead">You need Go, <code>ffmpeg</code>/<code>ffprobe</code> ≥ 5.0, and <code>lame</code> ≥ 3.100.</p>
+<h2>Download v0.2.0.</h2>
+<p class="section-lead">Linux builds for amd64 and arm64. Each archive contains the CLI, README, MIT license, Dolphin installer, wrapper, and ServiceMenus.</p>
 <div class="download-grid">
 <div>
-<h3>CLI</h3>
+<h3>Linux</h3>
+<p><a href="https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz">siphon_0.2.0_linux_amd64.tar.gz</a><br>
+<a href="https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_arm64.tar.gz">siphon_0.2.0_linux_arm64.tar.gz</a><br>
+<a href="https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt">siphon_0.2.0_checksums.txt</a> (SHA256)</p>
 <div class="code-card">
-<header><span class="code-card-title">Build and install</span><span>shell</span></header>
-<pre><code><span class="code-command">git clone https://github.com/Ashking-tech/siphon.git</span>
-<span class="code-command">cd siphon</span>
-<span class="code-command">make build</span>
-<span class="code-command">sudo install -Dm755 bin/siphon /usr/local/bin/siphon</span>
-<span class="code-command">siphon doctor</span></code></pre>
+<header><span class="code-card-title">Download, verify, extract</span><span>shell</span></header>
+<pre><code><span class="code-command">curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz</span>
+<span class="code-command">curl -LO https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt</span>
+<span class="code-command">sha256sum --check --ignore-missing siphon_0.2.0_checksums.txt</span>
+<span class="code-command">mkdir -p siphon-0.2.0</span>
+<span class="code-command">tar -xzf siphon_0.2.0_linux_amd64.tar.gz -C siphon-0.2.0</span>
+<span class="code-command">cd siphon-0.2.0</span>
+<span class="code-command">./siphon version</span>
+<span class="code-command">./siphon doctor</span></code></pre>
 </div>
-<div class="note-card">
-<p><strong>No release binaries yet.</strong> Distribution packages are planned. Watch the <a href="https://github.com/Ashking-tech/siphon/releases">releases page</a> for the first tagged build.</p>
-</div>
+<p class="fine">On arm64, replace <code>amd64</code> with <code>arm64</code> in the archive name and URL. Prefer to build? See the <a href="https://github.com/Ashking-tech/siphon#build-from-source">source instructions</a>.</p>
 </div>
 <aside>
 <h3>Dolphin / KDE</h3>
-<p>Optional ServiceMenu for Plasma 5 and 6.</p>
+<p>Optional ServiceMenu for Plasma 5 and 6. Run the installer from the extracted archive so it finds the CLI at the archive root.</p>
 <div class="code-card">
 <header><span class="code-card-title">Install ServiceMenu</span><span>shell</span></header>
-<pre><code><span class="code-command">make install-kde</span></code></pre>
+<pre><code><span class="code-command">./kde/install.sh</span></code></pre>
 </div>
-<p class="fine">Optional: WebP, Poppler and <code>kdialog</code> for those formats and the menu.</p>
+<p class="fine">Optional: <code>kdialog</code> for prompts, WebP and Poppler for those menu actions. <code>./kde/install.sh --help</code> lists <code>--prefix</code> and <code>--plasma</code>.</p>
 </aside>
 </div>
+<figure class="kde-shot">
+<img src="media/siphon-dolphin-menu.png" width="1200" height="886" alt="Dolphin's Actions menu with the Siphon submenu open, showing Convert to PNG and Convert to WebP" loading="lazy" decoding="async">
+<figcaption>Right-click a file, open Actions, then Siphon.</figcaption>
+</figure>
 </div>
 </section>
 
@@ -169,63 +245,93 @@
 </div>
 </section>
 
-<section class="section alt" id="formats">
+<section class="section alt" id="formats" aria-labelledby="formats-title">
 <div class="wrap">
 <p class="section-index">04 / Formats</p>
-<h2>What it converts.</h2>
-<p class="section-lead">Run <code>siphon inspect</code> to confirm a pair and see the exact space requirement.</p>
-<div class="format-rows">
-<div class="format-row">
-<div class="format-title">
-<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/></svg></span>
-<h3>Video</h3>
+<h2 id="formats-title">What it converts.</h2>
+<p class="section-lead">Supported format pairs at a glance. Run <code>siphon inspect</code> to confirm a pair and see the exact space requirement.</p>
+<div class="format-catalog">
+<div class="format-column">
+<section class="format-group" aria-labelledby="video-chart-title">
+<div class="format-group-head">
+<h3 id="video-chart-title">Video</h3>
+<span class="format-count">6 pairs</span>
 </div>
-<div class="pair-chips" aria-label="Video conversion formats">
-<span class="pair-chip"><span class="format-mark mkv">MKV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp4">MP4</span></span>
-<span class="pair-chip"><span class="format-mark mp4">MP4</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mkv">MKV</span><span class="new">new</span></span>
-<span class="pair-chip"><span class="format-mark mov">MOV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mkv">MKV</span><span class="new">new</span></span>
-<span class="pair-chip"><span class="format-mark mkv">MKV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mov">MOV</span><span class="new">new</span></span>
-<span class="pair-chip"><span class="format-mark webm">WebM</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark mp4">MP4</span><span class="new">new</span></span>
-<span class="pair-chip"><span class="format-mark gif">GIF</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark mp4">MP4</span><span class="new">new</span></span>
-</div>
+<table class="format-table">
+<caption class="sr-only">Video conversion pairs</caption>
+<thead>
+<tr><th scope="col">Source</th><th scope="col" class="format-arrow"><span class="sr-only">Direction</span></th><th scope="col">Target</th></tr>
+</thead>
+<tbody>
+<tr><td>MKV</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MP4</td></tr>
+<tr><td>MKV</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MOV</td></tr>
+<tr><td>MP4</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MKV</td></tr>
+<tr><td>MOV</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MKV</td></tr>
+<tr><td>WebM</td><td class="format-arrow"><span aria-hidden="true">↔</span><span class="sr-only">both directions</span></td><td>MP4</td></tr>
+<tr><td>GIF</td><td class="format-arrow"><span aria-hidden="true">↔</span><span class="sr-only">both directions</span></td><td>MP4</td></tr>
+</tbody>
+</table>
 <p class="format-note">MKV → MP4 defaults to relocate. <code>--mode safe</code> writes classic MP4 at 2× space.</p>
+</section>
+
+<section class="format-group" aria-labelledby="audio-chart-title">
+<div class="format-group-head">
+<h3 id="audio-chart-title">Audio</h3>
+<span class="format-count">2 pairs</span>
 </div>
-<div class="format-row">
-<div class="format-title">
-<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></span>
-<h3>Audio</h3>
-</div>
-<div class="pair-chips" aria-label="Audio conversion formats">
-<span class="pair-chip"><span class="format-mark wav">WAV</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp3">MP3</span></span>
-<span class="pair-chip"><span class="format-mark video">VIDEO</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark mp3">MP3</span><span class="new">new</span></span>
-</div>
+<table class="format-table">
+<caption class="sr-only">Audio conversion pairs</caption>
+<thead>
+<tr><th scope="col">Source</th><th scope="col" class="format-arrow"><span class="sr-only">Direction</span></th><th scope="col">Target</th></tr>
+</thead>
+<tbody>
+<tr><td>WAV</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MP3</td></tr>
+<tr><td>Video</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>MP3</td></tr>
+</tbody>
+</table>
 <p class="format-note"><code>--mode reclaim</code> is opt-in and uses about 1× space.</p>
+</section>
 </div>
-<div class="format-row">
-<div class="format-title">
-<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg></span>
-<h3>Images</h3>
+
+<div class="format-column">
+<section class="format-group" aria-labelledby="image-chart-title">
+<div class="format-group-head">
+<h3 id="image-chart-title">Images</h3>
+<span class="format-count">3 pairs</span>
 </div>
-<div class="pair-chips" aria-label="Image conversion formats">
-<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark jpg">JPG</span></span>
-<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark webp">WebP</span></span>
-<span class="pair-chip"><span class="format-mark jpg">JPG</span><span class="pair-arrow" aria-hidden="true">↔</span><span class="format-mark webp">WebP</span></span>
-</div>
+<table class="format-table">
+<caption class="sr-only">Image conversion pairs</caption>
+<thead>
+<tr><th scope="col">Source</th><th scope="col" class="format-arrow"><span class="sr-only">Direction</span></th><th scope="col">Target</th></tr>
+</thead>
+<tbody>
+<tr><td>PNG</td><td class="format-arrow"><span aria-hidden="true">↔</span><span class="sr-only">both directions</span></td><td>JPG</td></tr>
+<tr><td>PNG</td><td class="format-arrow"><span aria-hidden="true">↔</span><span class="sr-only">both directions</span></td><td>WebP</td></tr>
+<tr><td>JPG</td><td class="format-arrow"><span aria-hidden="true">↔</span><span class="sr-only">both directions</span></td><td>WebP</td></tr>
+</tbody>
+</table>
 <p class="format-note">Safe swaps. Alpha needs <code>--bg</code> when the target has no alpha.</p>
+</section>
+
+<section class="format-group" aria-labelledby="document-chart-title">
+<div class="format-group-head">
+<h3 id="document-chart-title">Documents</h3>
+<span class="format-count">2 pairs</span>
 </div>
-<div class="format-row">
-<div class="format-title">
-<span class="format-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span>
-<h3>Documents</h3>
-</div>
-<div class="pair-chips" aria-label="Document conversion formats">
-<span class="pair-chip"><span class="format-mark pdf">PDF</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark png">PNG</span><span class="pair-slash" aria-hidden="true">/</span><span class="format-mark jpg">JPG</span><span class="new">new</span></span>
-<span class="pair-chip"><span class="format-mark png">PNG</span><span class="pair-slash" aria-hidden="true">/</span><span class="format-mark jpg">JPG</span><span class="pair-arrow" aria-hidden="true">→</span><span class="format-mark pdf">PDF</span><span class="new">new</span></span>
-</div>
+<table class="format-table">
+<caption class="sr-only">Document conversion pairs</caption>
+<thead>
+<tr><th scope="col">Source</th><th scope="col" class="format-arrow"><span class="sr-only">Direction</span></th><th scope="col">Target</th></tr>
+</thead>
+<tbody>
+<tr><td>PDF</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>PNG / JPG</td></tr>
+<tr><td>PNG / JPG</td><td class="format-arrow"><span aria-hidden="true">→</span><span class="sr-only">to</span></td><td>PDF</td></tr>
+</tbody>
+</table>
 <p class="format-note">One page per file. Safe-only.</p>
+</section>
 </div>
 </div>
-<p class="note">Pairs marked <span class="new">new</span> are in progress for v0.2 and safe-only.</p>
 </div>
 </section>
 
@@ -262,7 +368,7 @@
 <div class="footer-grid">
 <div>
 <a class="brand footer-brand" href="./" aria-label="Siphon home">
-<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#c9f24d"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#080909"/></svg>
+<svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="#69b9c7"/><path d="M7 8h18l-6.5 9v6.5l-5 2.5v-9L7 8Z" fill="#111719"/></svg>
 <span>Siphon</span>
 </a>
 <p class="footer-tagline">Convert media in place on Linux.</p>
@@ -274,7 +380,7 @@
 <a href="#download">Get Siphon</a>
 </div>
 </div>
-<p class="fine">© 2026 the Siphon authors. <!-- TODO: add the published license before launch. --></p>
+<p class="fine">© 2026 Ashking-tech. MIT License.</p>
 </div>
 </footer>
 </div>

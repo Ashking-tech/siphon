@@ -48,7 +48,7 @@ fail_json() {
 }
 
 fail_json_hint() {
-	printf '{"ok":false,"code":"%s","message":"%s","source_untouched":true,"hints":{"%s":true},"plan":{"mode":"safe","warnings":[],"has_alpha":false';
+	printf '{"ok":false,"code":"%s","message":"%s","source_untouched":true,"hints":{"%s":true},"plan":{"mode":"safe","warnings":[],"has_alpha":false' "$1" "$2" "$3"
 	if [[ $1 == E_TRANSCODE_REQUIRED ]]; then
 		printf ',"transcode":{"video_codec":"h264","video_quality":23,"audio_codec":"aac","audio_bitrate":128}';
 	fi

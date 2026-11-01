@@ -2,7 +2,6 @@ package pdf
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -43,7 +42,7 @@ func Verify(data []byte, exp Expect) error {
 		return verifyErr("file is empty")
 	}
 	if !bytes.HasPrefix(trimmed, []byte("%PDF-1.7")) {
-		return verifyErr("header is not %PDF-1.7")
+		return verifyErr("header is not %%PDF-1.7")
 	}
 	if !bytes.HasSuffix(trimmed, []byte("%%EOF")) {
 		return verifyErr("file does not end with %%EOF")
@@ -518,5 +517,5 @@ func skipSpace(data []byte, pos int) int {
 }
 
 func verifyErr(format string, args ...any) error {
-	return siphonerr.New(siphonerr.VerifyFailed, "PDF verification failed: "+fmt.Sprintf(format, args...))
+	return siphonerr.New(siphonerr.VerifyFailed, "PDF verification failed: "+format, args...)
 }

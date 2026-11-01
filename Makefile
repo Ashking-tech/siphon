@@ -3,10 +3,16 @@ GO ?= go
 PREFIX ?= $(HOME)/.local
 KDEPLASMA ?= both
 
+VERSION ?= $(shell git describe --tags --always --dirty | sed 's/^v//')
+COMMIT  ?= $(shell git rev-parse --short HEAD)
+LDFLAGS := -s -w \
+	-X siphon/internal/version.Version=$(VERSION) \
+	-X siphon/internal/version.Commit=$(COMMIT)
+
 .PHONY: build test vet fmt clean install-kde uninstall-kde test-kde site-serve
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o bin/siphon ./cmd/siphon
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o bin/siphon ./cmd/siphon
 
 test:
 	$(GO) test ./...

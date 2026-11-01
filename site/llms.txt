@@ -8,7 +8,7 @@ Siphon is a single-binary CLI with an optional Dolphin ServiceMenu. It orchestra
 
 - Video default: MKV → MP4 in `relocate` mode, tail-first, one keyframe-aligned segment at a time. Peak extra space is one segment (typically 30–600 MB), not one film.
 - Audio default: WAV → MP3 in `safe` mode (about 15% extra space). `reclaim` mode writes into the source head and needs about 1×, but is opt-in and can leave a ≤ 26 ms splice on a crash.
-- Images, PDFs and the in-progress v0.2 pairs: `safe` only; peak space is source + output.
+- Images, PDFs and the v0.2 pairs: `safe` only; peak space is source + output.
 - Refusal is a first-class outcome: `siphon inspect` prints the plan and changes nothing.
 - A crash leaves a recoverable state: destructive modes journal the plan. `siphon recover <file>` resumes exactly for video, splices for audio reclaim, and cleans up for safe modes.
 - No silent quality loss: remux by default, metadata refusals rather than silent drops, explicit flags for lossy decisions.
@@ -18,7 +18,8 @@ Siphon is a single-binary CLI with an optional Dolphin ServiceMenu. It orchestra
 - MKV → MP4 (`relocate` default, `safe` for classic MP4)
 - WAV → MP3 (`safe` default, `reclaim` opt-in)
 - PNG ↔ JPG, PNG ↔ WebP, JPG ↔ WebP
-- In progress for v0.2: PDF → PNG/JPG (one page only), PNG/JPG → PDF, MP4/MOV → MKV, MKV → MOV, WebM ↔ MP4, GIF ↔ MP4, video → MP3
+- PDF → PNG/JPG (one page only), PNG/JPG → PDF
+- MP4/MOV → MKV, MKV → MOV, WebM ↔ MP4, GIF ↔ MP4, video → MP3
 
 ## Space table
 
@@ -38,7 +39,14 @@ Formula: `free = segment_duration × total_bitrate / 8 + 16 MB`.
 - Video relocate is remux-only: one video plus one optional audio track, sized clusters, no transcoding. Classic MP4 requires `--mode safe` and 2× space.
 - Relocate needs a filesystem with sparse files: ext4, btrfs, XFS. FAT32, exFAT and NTFS-3G are refused.
 - No first-class GUI yet; the Dolphin ServiceMenu is the graphical surface.
-- Packaging is planned; build from source today.
+- Linux binaries for amd64 and arm64 are published on GitHub Releases; building from source is also supported.
+- License: MIT, copyright Ashking-tech.
+
+## Download
+
+- Linux amd64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz
+- Linux arm64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_arm64.tar.gz
+- SHA256 checksums: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt
 
 ## Links
 
