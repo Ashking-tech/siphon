@@ -23,11 +23,11 @@ card source is `og.html`; regenerate `og.png` after changing the published URL.
 
 ## Releases
 
-The download section pins the v0.2.0 GitHub release assets:
+The download section pins the v0.2.1 GitHub release assets:
 
-- `siphon_0.2.0_linux_amd64.tar.gz`
-- `siphon_0.2.0_linux_arm64.tar.gz`
-- `siphon_0.2.0_checksums.txt`
+- `siphon_0.2.1_linux_amd64.tar.gz`
+- `siphon_0.2.1_linux_arm64.tar.gz`
+- `siphon_0.2.1_checksums.txt`
 
 Update the version, archive names, and URLs in `index.html` and `llms.txt` when
 a new release is tagged. Unversioned `latest` aliases do not exist yet, so each
@@ -94,7 +94,7 @@ These are intentional and should survive edits:
 
 - **v0.2 pairs are shipped.** They are listed in the format catalog without
   `new` badges or in-progress language.
-- **Downloads point only at the pinned v0.2.0 GitHub release assets.** Do not
+- **Downloads point only at the pinned v0.2.1 GitHub release assets.** Do not
   invent mirrors, Siphon package names, checksums, benchmarks, GUI screenshots,
   or license claims. The project license is MIT, copyright Ashking-tech.
 - **The peak disk-use comparison is conceptual, not to scale.** It shows the

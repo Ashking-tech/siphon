@@ -44,9 +44,9 @@ Formula: `free = segment_duration × total_bitrate / 8 + 16 MB`.
 
 ## Download
 
-- Linux amd64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_amd64.tar.gz
-- Linux arm64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_linux_arm64.tar.gz
-- SHA256 checksums: https://github.com/Ashking-tech/siphon/releases/download/v0.2.0/siphon_0.2.0_checksums.txt
+- Linux amd64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_linux_amd64.tar.gz
+- Linux arm64: https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_linux_arm64.tar.gz
+- SHA256 checksums: https://github.com/Ashking-tech/siphon/releases/download/v0.2.1/siphon_0.2.1_checksums.txt
 
 ## Links
 
