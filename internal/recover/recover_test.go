@@ -109,11 +109,14 @@ func TestRunRefusesWrongInode(t *testing.T) {
 	}
 	makeJournal(t, dir, "tone", src, filepath.Join(dir, "tone.mp3"), "sliding", "complete")
 
-	// Replace the file after the journal was written.
-	if err := os.Remove(src); err != nil {
+	// Replace the file after the journal was written. Create the impostor
+	// first so it cannot reuse the source inode on filesystems that recycle
+	// inode numbers immediately.
+	impostor := filepath.Join(dir, "impostor.wav")
+	if err := os.WriteFile(impostor, []byte("impostor"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(src, []byte("impostor"), 0o600); err != nil {
+	if err := os.Rename(impostor, src); err != nil {
 		t.Fatal(err)
 	}
 
